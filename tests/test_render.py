@@ -130,3 +130,18 @@ def test_other_api_errors_become_render_error(frames):
     client = FakeClient(error=RuntimeError("503 service unavailable"))
     with pytest.raises(render.RenderError):
         render.render_variant(_variant(), frames, client=client)
+
+
+def test_rate_limit_with_rejected_is_not_content_blocked(frames):
+    """Rate-limit errors contain 'rejected' but are NOT content refusals."""
+    client = FakeClient(error=RuntimeError("429 request rejected: rate limit exceeded"))
+    with pytest.raises(render.RenderError) as exc_info:
+        render.render_variant(_variant(), frames, client=client)
+    assert not isinstance(exc_info.value, render.RenderBlocked)
+
+
+def test_genuine_content_policy_violation_is_blocked(frames):
+    """Content policy violations must raise RenderBlocked, not plain RenderError."""
+    client = FakeClient(error=RuntimeError("content_policy_violation: unsafe image"))
+    with pytest.raises(render.RenderBlocked):
+        render.render_variant(_variant(), frames, client=client)

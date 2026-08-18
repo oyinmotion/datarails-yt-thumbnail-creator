@@ -35,7 +35,7 @@ def _is_moderation(exc: Exception) -> bool:
     text = f"{type(exc).__name__} {exc}".lower()
     return any(
         marker in text
-        for marker in ("moderation", "safety", "content_policy", "rejected")
+        for marker in ("moderation", "content_policy", "content policy", "safety system")
     )
 
 
