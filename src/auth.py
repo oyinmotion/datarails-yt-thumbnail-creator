@@ -26,7 +26,7 @@ def is_allowed_email(email: str | None) -> bool:
     if "@" not in cleaned:
         return False
     local_part, domain = cleaned.rsplit("@", 1)
-    return local_part and domain == ALLOWED_EMAIL_DOMAIN
+    return bool(local_part) and domain == ALLOWED_EMAIL_DOMAIN
 
 
 def build_flow(client_id: str, client_secret: str, redirect_uri: str) -> Flow:

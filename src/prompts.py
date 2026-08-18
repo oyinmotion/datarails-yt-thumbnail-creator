@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from .config import PROMPTS_DIR
-from .models import MATRIX, TREATMENT_BRIEF, Variant
+from .models import TREATMENT_BRIEF, Variant
 
 
 @lru_cache(maxsize=None)

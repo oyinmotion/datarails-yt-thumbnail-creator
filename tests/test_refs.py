@@ -59,3 +59,19 @@ def test_save_winner_tags_the_file_with_its_treatment(isolated_refs, tmp_path):
     assert saved.name.startswith("text_dominant__")
     assert saved.exists()
     assert refs.winner_refs("text_dominant") == [saved]
+
+
+def test_save_winner_called_twice_for_same_treatment_keeps_both_files(
+    isolated_refs, tmp_path
+):
+    src_file = tmp_path / "chosen.png"
+    src_file.write_bytes(b"\x89PNG fake")
+    first = refs.save_winner(src_file, "text_dominant")
+    second = refs.save_winner(src_file, "text_dominant")
+    assert first != second
+    assert first.exists()
+    assert second.exists()
+    found = refs.winner_refs("text_dominant")
+    assert first in found
+    assert second in found
+    assert len(found) == 2

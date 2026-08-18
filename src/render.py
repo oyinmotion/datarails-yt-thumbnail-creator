@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import logging
 from pathlib import Path
 
 from .config import GEN_SIZE, IMAGE_MODEL, IMAGE_QUALITY
 from .models import Variant
 from .prompts import render_prompt
 from .refs import pick_refs
+
+log = logging.getLogger(__name__)
 
 # images.edit accepts at most 16 input images for gpt-image models.
 MAX_INPUT_IMAGES = 16
@@ -54,8 +57,15 @@ def render_variant(
         )
 
     image_paths: list[Path] = [primary]
-    if variant.second_frame_id and variant.second_frame_id in frames:
-        image_paths.append(frames[variant.second_frame_id])
+    if variant.second_frame_id:
+        if variant.second_frame_id in frames:
+            image_paths.append(frames[variant.second_frame_id])
+        else:
+            log.warning(
+                "second_frame_id %r not found in frames; rendering with "
+                "only the primary frame",
+                variant.second_frame_id,
+            )
     image_paths.extend(pick_refs(variant.treatment, limit=3))
     image_paths = image_paths[:MAX_INPUT_IMAGES]
 
