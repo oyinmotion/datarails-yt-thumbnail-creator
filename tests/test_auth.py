@@ -17,6 +17,8 @@ def test_datarails_emails_are_allowed(email):
     "someone@gmail.com",
     "attacker@datarails.com.evil.com",
     "datarails.com",
+    "@datarails.com",
+    "x@sub.datarails.com",
     "",
     None,
 ])
@@ -65,3 +67,23 @@ def test_exchange_code_returns_credentials_and_email(monkeypatch):
     creds, email = auth.exchange_code(FakeFlow(), "code123")
     assert creds is sentinel
     assert email == "omer.y@datarails.com"
+
+
+def test_exchange_code_hides_exception_details_from_user(monkeypatch):
+    """Verify that sensitive details in exceptions are not leaked to the UI."""
+    sentinel_secret = "client_secret=SUPERSECRET"
+
+    class FakeFlow:
+        credentials = object()
+
+        def fetch_token(self, code=None):
+            # Simulate an exception that contains sensitive information
+            raise ValueError(sentinel_secret)
+
+    with pytest.raises(auth.AuthError) as exc_info:
+        auth.exchange_code(FakeFlow(), "code123")
+
+    # The user-facing error message should be generic
+    assert "Sign-in didn't complete" in str(exc_info.value)
+    # The sensitive detail should NOT appear in the error message
+    assert sentinel_secret not in str(exc_info.value)

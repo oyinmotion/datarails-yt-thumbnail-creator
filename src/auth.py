@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from oauthlib.oauth2.rfc6749.errors import OAuth2Error
+from requests.exceptions import RequestException
 
 from .config import ALLOWED_EMAIL_DOMAIN, GOOGLE_SCOPES
+
+log = logging.getLogger(__name__)
 
 
 class AuthError(RuntimeError):
@@ -16,7 +22,11 @@ def is_allowed_email(email: str | None) -> bool:
     if not email:
         return False
     cleaned = email.strip().lower()
-    return cleaned.endswith(f"@{ALLOWED_EMAIL_DOMAIN}")
+    # Require non-empty local part before the @ and exact domain match
+    if "@" not in cleaned:
+        return False
+    local_part, domain = cleaned.rsplit("@", 1)
+    return local_part and domain == ALLOWED_EMAIL_DOMAIN
 
 
 def build_flow(client_id: str, client_secret: str, redirect_uri: str) -> Flow:
@@ -45,16 +55,29 @@ def authorization_url(flow: Flow) -> tuple[str, str]:
 
 
 def _email_from_credentials(credentials) -> str:
-    service = build("oauth2", "v2", credentials=credentials,
-                    cache_discovery=False)
-    return service.userinfo().get().execute().get("email", "")
+    try:
+        service = build("oauth2", "v2", credentials=credentials,
+                        cache_discovery=False)
+        return service.userinfo().get().execute().get("email", "")
+    except (OAuth2Error, RequestException) as exc:
+        log.warning("Failed to fetch email from credentials", exc_info=True)
+        raise AuthError("Sign-in didn't complete. Please try again.") from exc
+    except Exception as exc:
+        log.warning("Unexpected error fetching email from credentials",
+                    exc_info=True)
+        raise AuthError("Sign-in didn't complete. Please try again.") from exc
 
 
 def exchange_code(flow, code: str) -> tuple[object, str]:
     try:
         flow.fetch_token(code=code)
+    except (OAuth2Error, RequestException) as exc:
+        log.warning("OAuth token exchange failed", exc_info=True)
+        raise AuthError("Sign-in didn't complete. Please try again.") from exc
     except Exception as exc:
-        raise AuthError(f"Sign-in didn't complete: {exc}") from exc
+        log.warning("Unexpected error during OAuth token exchange",
+                    exc_info=True)
+        raise AuthError("Sign-in didn't complete. Please try again.") from exc
 
     credentials = flow.credentials
     email = _email_from_credentials(credentials)
