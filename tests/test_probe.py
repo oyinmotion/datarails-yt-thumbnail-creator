@@ -53,3 +53,29 @@ def test_interval_timestamps_are_evenly_spread_and_inside_the_video():
     assert len(ts) == 4
     assert all(0 < t < 40.0 for t in ts)
     assert ts == sorted(ts)
+
+
+@needs_sample
+def test_extract_frames_interval_fallback_with_real_ffmpeg(tmp_path, monkeypatch):
+    """Force interval-sampling fallback by raising MIN_SCENE_FRAMES impossibly high."""
+    monkeypatch.setattr(probe, "MIN_SCENE_FRAMES", 999)
+    frames = probe.extract_frames(SAMPLE, tmp_path, max_frames=4)
+
+    # Assert count matches request
+    assert len(frames) == 4
+
+    # Assert all filenames use interval pattern (not scene pattern)
+    for f in frames:
+        assert f.name.startswith("interval_")
+        assert f.name.endswith(".jpg")
+
+    # Assert all are real JPEG images of correct width
+    for f in frames:
+        assert f.exists() and f.stat().st_size > 0
+        with Image.open(f) as im:
+            assert im.format == "JPEG"
+            assert im.width == 1280
+
+    # Assert frames are distinct (no byte-level duplicates)
+    digests = {f.read_bytes()[:2048] for f in frames}
+    assert len(digests) == len(frames)
