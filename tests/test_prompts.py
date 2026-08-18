@@ -35,7 +35,7 @@ def test_render_prompt_carries_the_treatment_brief():
 
 def test_render_prompt_forbids_extra_text():
     text = prompts.render_prompt(_variant()).lower()
-    assert "no other text" in text
+    assert "other text" in text
     assert "do not add" in text
 
 

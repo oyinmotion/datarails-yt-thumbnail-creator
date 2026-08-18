@@ -34,6 +34,6 @@ Render exactly this headline, and nothing else:
 "{headline}"
 
 Spell it exactly as written, all capitals, every word legible and fully inside
-the frame. Add no other text, tagline, caption, watermark, signature, URL, or
-logo. Do not add a play button or any interface element. Do not letter the text
-across a person's face.
+the frame. Do not add any other text, tagline, caption, watermark, signature,
+URL, or logo. Do not add a play button or any interface element. Do not letter
+the text across a person's face.
