@@ -75,3 +75,37 @@ def test_fetch_video_permission_error_is_human_readable(monkeypatch, tmp_path):
     monkeypatch.setattr(drive, "_service", lambda creds: FakeService())
     with pytest.raises(drive.DriveError, match="access"):
         drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+
+
+def test_fetch_video_download_failure_cleans_up_partial_file(monkeypatch, tmp_path):
+    class FakeFiles:
+        def get(self, **kwargs):
+            class R:
+                def execute(self_inner):
+                    return {"id": "x", "name": "video.mp4",
+                            "mimeType": "video/mp4", "parents": ["p1"]}
+            return R()
+
+        def get_media(self, **kwargs):
+            return object()
+
+    class FakeService:
+        def files(self):
+            return FakeFiles()
+
+    class FakeDownloader:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def next_chunk(self):
+            raise IOError("Network connection lost")
+
+    monkeypatch.setattr(drive, "_service", lambda creds: FakeService())
+    monkeypatch.setattr(drive, "MediaIoBaseDownload", FakeDownloader)
+
+    with pytest.raises(drive.DriveError, match="interrupted"):
+        drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+
+    # Verify the partial file was cleaned up
+    partial_file = tmp_path / "video.mp4"
+    assert not partial_file.exists()

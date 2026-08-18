@@ -87,11 +87,15 @@ def fetch_video(file_id: str, creds, dest_dir: Path) -> tuple[Path, str]:
     local = dest_dir / meta["name"]
 
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    with local.open("wb") as handle:
-        downloader = MediaIoBaseDownload(handle, request, chunksize=8 * 1024 * 1024)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
+    try:
+        with local.open("wb") as handle:
+            downloader = MediaIoBaseDownload(handle, request, chunksize=8 * 1024 * 1024)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+    except Exception as exc:
+        local.unlink(missing_ok=True)
+        raise DriveError("The download was interrupted. Try again.") from exc
 
     parents = meta.get("parents") or []
     return local, (parents[0] if parents else "root")
