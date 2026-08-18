@@ -1,6 +1,34 @@
 import pytest
 
 from src import drive
+from src.config import MAX_VIDEO_BYTES
+
+
+def _fake_service(meta, downloader_bytes=b"video data"):
+    class FakeFiles:
+        def get(self, **kwargs):
+            class R:
+                def execute(self_inner):
+                    return meta
+            return R()
+
+        def get_media(self, **kwargs):
+            return object()
+
+    class FakeService:
+        def files(self):
+            return FakeFiles()
+
+    return FakeService()
+
+
+class OneShotDownloader:
+    def __init__(self, handle, request, chunksize=None):
+        self.handle = handle
+
+    def next_chunk(self):
+        self.handle.write(b"video data")
+        return None, True
 
 
 @pytest.mark.parametrize("url,expected", [
@@ -109,3 +137,74 @@ def test_fetch_video_download_failure_cleans_up_partial_file(monkeypatch, tmp_pa
     # Verify the partial file was cleaned up
     partial_file = tmp_path / "video.mp4"
     assert not partial_file.exists()
+
+
+def test_fetch_video_refuses_an_oversize_ad_before_downloading(
+    monkeypatch, tmp_path
+):
+    """A 2GB ad used to fill the disk and then report an interrupted download,
+    which invites a retry that fails the same way."""
+    size = MAX_VIDEO_BYTES * 4
+    meta = {"id": "x", "name": "huge.mp4", "mimeType": "video/mp4",
+            "parents": ["p1"], "size": str(size)}
+    monkeypatch.setattr(drive, "_service", lambda creds: _fake_service(meta))
+
+    def must_not_download(*args, **kwargs):
+        raise AssertionError("the download must not start")
+
+    monkeypatch.setattr(drive, "MediaIoBaseDownload", must_not_download)
+
+    with pytest.raises(drive.DriveError) as exc_info:
+        drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+    message = str(exc_info.value)
+    assert "2000MB" in message           # names the actual size
+    assert "500MB" in message             # and the limit
+    assert not list(tmp_path.iterdir())
+
+
+def test_fetch_video_accepts_a_file_inside_the_size_limit(monkeypatch, tmp_path):
+    meta = {"id": "x", "name": "ok.mp4", "mimeType": "video/mp4",
+            "parents": ["p1"], "size": str(MAX_VIDEO_BYTES - 1)}
+    monkeypatch.setattr(drive, "_service", lambda creds: _fake_service(meta))
+    monkeypatch.setattr(drive, "MediaIoBaseDownload", OneShotDownloader)
+    local, parent = drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+    assert local == tmp_path / "ok.mp4"
+    assert parent == "p1"
+
+
+def test_fetch_video_tolerates_a_missing_size_field(monkeypatch, tmp_path):
+    """Some Drive items report no size; that must not block the download."""
+    meta = {"id": "x", "name": "ok.mp4", "mimeType": "video/mp4",
+            "parents": ["p1"]}
+    monkeypatch.setattr(drive, "_service", lambda creds: _fake_service(meta))
+    monkeypatch.setattr(drive, "MediaIoBaseDownload", OneShotDownloader)
+    local, _ = drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+    assert local.exists()
+
+
+def test_fetch_video_sanitizes_a_name_containing_a_path_separator(
+    monkeypatch, tmp_path
+):
+    """A Drive name is user-controlled text, not a path component."""
+    meta = {"id": "x", "name": "../../evil.mp4", "mimeType": "video/mp4",
+            "parents": ["p1"], "size": "1024"}
+    monkeypatch.setattr(drive, "_service", lambda creds: _fake_service(meta))
+    monkeypatch.setattr(drive, "MediaIoBaseDownload", OneShotDownloader)
+    local, _ = drive.fetch_video("x", creds=object(), dest_dir=tmp_path)
+    assert local == tmp_path / "evil.mp4"
+    assert local.parent == tmp_path
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("video.mp4", "video.mp4"),
+    ("a/b/c.mp4", "c.mp4"),
+    ("../../etc/passwd", "passwd"),
+    ("folder\\ad.mp4", "ad.mp4"),
+    ("  padded.mp4  ", "padded.mp4"),
+    ("", "ad.mp4"),
+    (".", "ad.mp4"),
+    ("..", "ad.mp4"),
+    ("/", "ad.mp4"),
+])
+def test_safe_filename_reduces_a_drive_name_to_a_basename(name, expected):
+    assert drive.safe_filename(name) == expected

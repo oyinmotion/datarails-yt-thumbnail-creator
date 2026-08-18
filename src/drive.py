@@ -9,6 +9,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
+from .config import MAX_VIDEO_BYTES
+
 
 class DriveError(RuntimeError):
     """Any Drive failure, phrased for a marketer rather than a developer."""
@@ -24,6 +26,25 @@ _PATTERNS = [
     re.compile(rf"[?&]id={_ID}"),
 ]
 _BARE_ID = re.compile(r"^[A-Za-z0-9_-]{25,}$")
+_FALLBACK_NAME = "ad.mp4"
+
+
+def _human_size(size: int) -> str:
+    return f"{size / (1024 * 1024):.0f}MB"
+
+
+def safe_filename(name: str) -> str:
+    """Drive names are user-controlled text, not path components.
+
+    A name containing a separator would have written outside dest_dir (or, more
+    likely, failed with a misleading "download was interrupted"), so reduce it
+    to a bare basename and fall back to a fixed name if nothing usable is left.
+    """
+    cleaned = (name or "").strip().replace("\\", "/")
+    cleaned = cleaned.split("/")[-1].strip()
+    if not cleaned or cleaned in {".", ".."} or cleaned.startswith("."):
+        return _FALLBACK_NAME
+    return cleaned
 
 
 def parse_file_id(url: str) -> str:
@@ -81,9 +102,23 @@ def fetch_video(file_id: str, creds, dest_dir: Path) -> tuple[Path, str]:
             "video."
         )
 
+    # The size guard runs before the download, not after: an oversize ad would
+    # otherwise fill the container's disk and then report "the download was
+    # interrupted", which invites a retry that fails the same way.
+    try:
+        size = int(meta.get("size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    if size > MAX_VIDEO_BYTES:
+        raise DriveError(
+            f"That ad is {_human_size(size)}, and this tool tops out at "
+            f"{_human_size(MAX_VIDEO_BYTES)}. Export a smaller version — a "
+            "1080p H.264 cut is plenty for thumbnails."
+        )
+
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    local = dest_dir / meta["name"]
+    local = dest_dir / safe_filename(meta.get("name", ""))
 
     request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
     try:

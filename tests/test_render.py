@@ -145,3 +145,66 @@ def test_genuine_content_policy_violation_is_blocked(frames):
     client = FakeClient(error=RuntimeError("content_policy_violation: unsafe image"))
     with pytest.raises(render.RenderBlocked):
         render.render_variant(_variant(), frames, client=client)
+
+
+class FakeImagesReturning:
+    """A response whose shape is not what we expect."""
+
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def edit(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
+
+
+def _client_returning(response):
+    client = FakeClient()
+    client.images = FakeImagesReturning(response)
+    return client
+
+
+def test_an_empty_data_list_becomes_a_render_error(frames):
+    """Decoding used to sit outside the try, so this raised IndexError — which
+    pool.map re-raises, killing all five variants."""
+    response = type("R", (), {"data": []})()
+    with pytest.raises(render.RenderError):
+        render.render_variant(_variant(), frames,
+                              client=_client_returning(response))
+
+
+def test_a_missing_data_attribute_becomes_a_render_error(frames):
+    response = type("R", (), {})()
+    with pytest.raises(render.RenderError):
+        render.render_variant(_variant(), frames,
+                              client=_client_returning(response))
+
+
+def test_a_null_b64_json_becomes_a_render_error(frames):
+    response = type("R", (), {
+        "data": [type("D", (), {"b64_json": None})()],
+    })()
+    with pytest.raises(render.RenderError):
+        render.render_variant(_variant(), frames,
+                              client=_client_returning(response))
+
+
+def test_a_malformed_payload_is_not_reported_as_a_content_block(frames):
+    """A bad payload must not be mistaken for a moderation refusal — the
+    pipeline reacts to those by rerolling with a different frame."""
+    response = type("R", (), {"data": []})()
+    with pytest.raises(render.RenderError) as exc_info:
+        render.render_variant(_variant(), frames,
+                              client=_client_returning(response))
+    assert not isinstance(exc_info.value, render.RenderBlocked)
+
+
+def test_the_shared_client_factory_sets_a_timeout():
+    """No module may build a bare OpenAI() with the SDK's 600s default."""
+    from src import config, openai_client
+    import inspect
+
+    source = inspect.getsource(openai_client.get_client)
+    assert "timeout" in source and "max_retries" in source
+    assert config.OPENAI_TIMEOUT_SECONDS < 600

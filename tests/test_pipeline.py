@@ -1,9 +1,12 @@
+import io
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from src import pipeline, postprocess, probe, qa, render
+from src import backoff, pipeline, postprocess, probe, qa, render
 from src import plan as plan_module
+from src.config import FINAL_H, FINAL_W, GEN_SIZE
 from src.models import MATRIX, BatchPlan, Variant
 from src.qa import QAResult
 
@@ -50,7 +53,13 @@ def wired(monkeypatch, tmp_path):
         return Path(out_path)
 
     monkeypatch.setattr(postprocess, "finalize", fake_finalize)
-    monkeypatch.setattr(qa, "check", lambda *a, **k: QAResult(ok=True))
+    monkeypatch.setattr(
+        qa, "check",
+        lambda path, headline, **k: QAResult(ok=True, transcribed=headline),
+    )
+    # Backoff is real in production and instant in tests.
+    monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", lambda seconds: None)
+    monkeypatch.setattr(plan_module, "DEFAULT_SLEEPER", lambda seconds: None)
     return written
 
 
@@ -188,3 +197,161 @@ def test_progress_callback_reports_each_phase(wired, tmp_path):
     assert "frame" in joined
     assert "plan" in joined or "reading" in joined
     assert "render" in joined
+
+
+def test_one_variant_blowing_up_unexpectedly_costs_only_that_tile(
+    wired, tmp_path, monkeypatch
+):
+    """pool.map re-raises, so an exception that is not a RenderError used to
+    take all five variants down with it."""
+    def explode_for_variant_three(variant, frames, client=None,
+                                  extra_instruction="", frame_override=None):
+        if variant.index == 3:
+            raise TypeError("'NoneType' object is not subscriptable")
+        return b"\x89PNG bytes"
+
+    monkeypatch.setattr(render, "render_variant", explode_for_variant_three)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+
+    assert len(outcome.results) == 5
+    by_index = {r.variant.index: r for r in outcome.results}
+    assert by_index[3].path is None
+    assert by_index[3].flagged
+    assert "something went wrong" in by_index[3].note
+    assert all(by_index[i].path is not None for i in (1, 2, 4, 5))
+
+
+def test_an_unexpected_failure_in_finalize_also_costs_only_one_tile(
+    wired, tmp_path, monkeypatch
+):
+    calls = {"n": 0}
+    real_fake = postprocess.finalize
+
+    def sometimes_broken(image_bytes, out_path):
+        if "03_" in Path(out_path).name:
+            raise OSError("cannot identify image file")
+        calls["n"] += 1
+        return real_fake(image_bytes, out_path)
+
+    monkeypatch.setattr(postprocess, "finalize", sometimes_broken)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert len(outcome.results) == 5
+    assert sum(1 for r in outcome.results if r.path is None) == 1
+
+
+def test_a_failed_render_backs_off_before_the_reroll(wired, tmp_path, monkeypatch):
+    delays = []
+    monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", delays.append)
+
+    def always_fails(*args, **kwargs):
+        raise render.RenderError("429 rate limit")
+
+    monkeypatch.setattr(render, "render_variant", always_fails)
+    pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+
+    # One backoff per variant, before its single reroll — and every delay is
+    # both non-zero and distinct, so the five do not re-collide.
+    assert len(delays) == 5
+    assert all(d > 0 for d in delays)
+    assert len(set(delays)) == 5
+    assert sorted(delays) == sorted(
+        backoff.delay_for(1, offset=i * backoff.STAGGER) for i in range(1, 6)
+    )
+
+
+def test_backoff_grows_between_attempts():
+    """The delay after a second failure is longer than after the first."""
+    assert backoff.delay_for(2) > backoff.delay_for(1)
+
+
+def test_a_qa_reroll_does_not_make_the_user_wait(wired, tmp_path, monkeypatch):
+    """Backoff is for rate limits, not for an illegible headline."""
+    delays = []
+    monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", delays.append)
+    monkeypatch.setattr(
+        qa, "check",
+        lambda path, headline, **k: QAResult(
+            ok=False, problems=["the headline isn't readable"],
+        ),
+    )
+    pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert delays == []
+
+
+def test_an_unverified_batch_warns_the_user(wired, tmp_path, monkeypatch):
+    """A QA outage fails open, which must never be silent."""
+    monkeypatch.setattr(
+        qa, "check",
+        lambda path, headline, **k: QAResult(ok=True, transcribed=None),
+    )
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert all(r.unverified for r in outcome.results)
+    assert any("could not be text-checked" in w for w in outcome.warnings)
+    assert any("5 of 5" in w for w in outcome.warnings)
+
+
+def test_a_verified_batch_does_not_warn(wired, tmp_path):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert not any("text-checked" in w for w in outcome.warnings)
+
+
+# --- T11: the real finalize feeding the real hard checks --------------------
+def _real_render_bytes() -> bytes:
+    """A genuine PNG at the size gpt-image-2 is actually asked for."""
+    width, height = (int(v) for v in GEN_SIZE.split("x"))
+    image = Image.new("RGB", (width, height), (12, 24, 48))
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+class FakeVision:
+    """Only the vision call is stubbed. It reads back every headline in the
+    batch, so each variant's own words appear in order."""
+
+    class responses:
+        @staticmethod
+        def create(**kwargs):
+            return type("R", (), {"output_text": "HOOK 1 2 3 4 5"})()
+
+
+def test_a_real_2048x1152_render_survives_finalize_and_hard_checks(
+    tmp_path, monkeypatch
+):
+    """The one integration the suite used to fake on both sides. If finalize
+    ever stopped downscaling, hard_checks would flag all five tiles and nobody
+    would know until a live run."""
+    frames = []
+    for name in ("scene_001.jpg", "scene_002.jpg"):
+        frame = tmp_path / name
+        frame.write_bytes(b"\xff\xd8\xff fake")
+        frames.append(frame)
+    audio = tmp_path / "audio.m4a"
+    audio.write_bytes(b"fake")
+
+    monkeypatch.setattr(probe, "extract_frames",
+                        lambda video, out_dir, max_frames=16: frames)
+    monkeypatch.setattr(probe, "extract_audio", lambda video, out_dir: audio)
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan())
+    monkeypatch.setattr(render, "render_variant",
+                        lambda *a, **k: _real_render_bytes())
+    monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", lambda seconds: None)
+    # postprocess.finalize and qa.check are the REAL ones here.
+
+    outcome = pipeline.generate_batch(
+        tmp_path / "ad.mp4", tmp_path / "work", client=FakeVision(),
+    )
+
+    assert len(outcome.results) == 5
+    assert all(r.path is not None for r in outcome.results), [
+        r.note for r in outcome.results
+    ]
+    assert not any(r.flagged for r in outcome.results), [
+        r.note for r in outcome.results
+    ]
+    assert not any(r.unverified for r in outcome.results)
+
+    for result in outcome.results:
+        assert qa.hard_checks(result.path) == []
+        with Image.open(result.path) as im:
+            assert im.size == (FINAL_W, FINAL_H)

@@ -18,7 +18,10 @@ def test_video_duration_matches_the_sample_ad():
 @needs_sample
 def test_extract_frames_returns_real_jpegs_capped_at_max(tmp_path):
     frames = probe.extract_frames(SAMPLE, tmp_path, max_frames=8)
-    assert 1 <= len(frames) <= 8
+    # The sample ad is a multi-cut skit and yields the full 8. Asserting a
+    # meaningful floor catches an extraction that silently collapses to one
+    # frame, while still tolerating a small shift in scene detection.
+    assert 4 <= len(frames) <= 8
     for f in frames:
         assert f.exists() and f.stat().st_size > 0
         with Image.open(f) as im:

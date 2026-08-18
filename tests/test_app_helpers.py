@@ -76,3 +76,25 @@ def test_should_show_outcome_ignores_surrounding_whitespace():
 def test_should_show_outcome_empty_current_link_does_not_match_stored():
     stored = "https://drive.google.com/file/d/abc123/view"
     assert app.should_show_outcome(stored, "") is False
+
+
+# --- OAuth state (I10) ------------------------------------------------------
+def test_oauth_state_matches_when_the_callback_echoes_it():
+    assert app.oauth_state_matches("abc123", "abc123") is True
+
+
+def test_oauth_state_rejects_a_different_state():
+    """A forged callback carrying someone else's code must not be exchanged."""
+    assert app.oauth_state_matches("abc123", "evil999") is False
+
+
+def test_oauth_state_rejects_a_missing_state_when_one_is_on_record():
+    assert app.oauth_state_matches("abc123", None) is False
+    assert app.oauth_state_matches("abc123", "") is False
+
+
+def test_oauth_state_allows_the_callback_when_no_state_was_stored():
+    """Streamlit starts a fresh session on the redirect back from Google, so an
+    absent stored state means unverifiable, not hostile — refusing it would
+    lock every user out."""
+    assert app.oauth_state_matches(None, "abc123") is True

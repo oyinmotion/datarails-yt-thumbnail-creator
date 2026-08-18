@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import shutil
 import tempfile
@@ -14,6 +15,8 @@ import streamlit as st
 
 from src import auth, drive, refs
 from src.pipeline import ThumbResult, generate_batch
+
+log = logging.getLogger(__name__)
 
 # --- pure helpers (tested) --------------------------------------------------
 # Everything below the helpers runs inside main(). Streamlit executes this file
@@ -30,6 +33,20 @@ def zip_bytes(results: list[ThumbResult]) -> bytes:
 
 def batch_folder_name(video_name: str, stamp: str) -> str:
     return f"thumbnails — {Path(video_name).stem} — {stamp}"
+
+
+def oauth_state_matches(expected: str | None, returned: str | None) -> bool:
+    """Guard the OAuth callback against a forged `code` (login CSRF).
+
+    Streamlit starts a fresh session on the page load that follows the Google
+    redirect, so `expected` can legitimately be gone by the time the callback
+    runs. Treat that as unverifiable rather than as an attack — refusing it
+    would lock every user out — but refuse outright when a state IS on record
+    and the callback carries a different one (or none).
+    """
+    if expected is None:
+        return True
+    return bool(returned) and returned == expected
 
 
 def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
@@ -63,6 +80,16 @@ def require_sign_in():
 
     code = st.query_params.get("code")
     if code:
+        if not oauth_state_matches(st.session_state.get("oauth_state"),
+                                   st.query_params.get("state")):
+            st.session_state.pop("oauth_state", None)
+            st.error(
+                "That sign-in link didn't match this browser session, so we "
+                "stopped. Please sign in again."
+            )
+            st.query_params.clear()
+            st.stop()
+        st.session_state.pop("oauth_state", None)
         try:
             credentials, email = auth.exchange_code(flow, code)
         except auth.AuthError as exc:
@@ -74,7 +101,8 @@ def require_sign_in():
         st.query_params.clear()
         st.rerun()
 
-    url, _state = auth.authorization_url(flow)
+    url, state = auth.authorization_url(flow)
+    st.session_state["oauth_state"] = state
     st.title("🎬 YT Thumbnail Creator")
     st.write("Five YouTube ad thumbnails from one Drive link.")
     st.link_button("Sign in with your Datarails Google account", url,
@@ -86,9 +114,9 @@ def require_sign_in():
 def main() -> None:
     st.set_page_config(page_title="YT Thumbnail Creator", page_icon="🎬",
                        layout="wide")
-    # src/plan.py, src/render.py and src/qa.py construct OpenAI() with no
-    # arguments, which reads os.environ only — export the key before anything
-    # reaches the pipeline so it's there regardless of how secrets are wired.
+    # src/openai_client.py constructs OpenAI() without an api_key argument,
+    # which reads os.environ only — export the key before anything reaches the
+    # pipeline so it's there regardless of how secrets are wired.
     os.environ.setdefault("OPENAI_API_KEY", _secret("OPENAI_API_KEY"))
     credentials = require_sign_in()
 
@@ -130,6 +158,7 @@ def main() -> None:
         status = st.status("Starting…", expanded=True)
         work_dir = Path(tempfile.mkdtemp(prefix="ytthumb_"))
         video: Path | None = None
+        succeeded = False
         try:
             status.update(label="Fetching the ad from Drive…")
             video, parent_id = drive.fetch_video(file_id, credentials, work_dir)
@@ -149,17 +178,26 @@ def main() -> None:
             # Renders live in work_dir/out and the download buttons read them
             # back later, so keep the tree — just not the 86MB source video.
             st.session_state["work_dir"] = work_dir
-        except (drive.DriveError, RuntimeError) as exc:
+            succeeded = True
+        except Exception as exc:
+            # Deliberately broad. openai.OpenAIError is not a RuntimeError, an
+            # empty refs/style/ raises FileNotFoundError and a bad render
+            # raises PIL's UnidentifiedImageError (an OSError) — none of which
+            # were caught before, so each one showed the user a raw traceback
+            # and leaked the work tree.
+            log.exception("batch failed")
             status.update(label="Failed.", state="error")
-            st.error(str(exc))
-            # Nothing in work_dir is retained when the batch failed.
-            shutil.rmtree(work_dir, ignore_errors=True)
-            st.stop()
+            st.error(f"That didn't work: {exc}")
         finally:
             # The video is only needed while generate_batch runs — free it on
             # both the success and failure paths.
             if video is not None:
                 video.unlink(missing_ok=True)
+            # Every failure path frees the whole ~86MB work tree. The success
+            # path must keep it: the download buttons read work_dir/out.
+            if not succeeded:
+                shutil.rmtree(work_dir, ignore_errors=True)
+                st.stop()
 
     outcome = st.session_state.get("outcome")
     if outcome and should_show_outcome(st.session_state.get("outcome_link"), link):
@@ -186,7 +224,12 @@ def main() -> None:
                 if st.button("⭐ Save as reference",
                              key=f"ref_{result.variant.index}"):
                     refs.save_winner(result.path, result.variant.treatment)
-                    st.success("Added to the house style pack.")
+                    st.success(
+                        "Saved as a reference for this session only. The "
+                        "server's file system is wiped on every redeploy, so "
+                        "making it permanent means committing the file to "
+                        "refs/winners/ in the repo."
+                    )
 
         successful = [r for r in outcome.results if r.path]
         if successful:

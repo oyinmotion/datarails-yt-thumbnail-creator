@@ -15,6 +15,7 @@ from pathlib import Path
 from PIL import Image
 
 from .config import FINAL_H, FINAL_W, MAX_BYTES, QA_MODEL
+from .openai_client import get_client
 from .prompts import load
 
 log = logging.getLogger(__name__)
@@ -29,7 +30,16 @@ _PUNCT = re.compile(r"[^\w\s]", flags=re.UNICODE)
 class QAResult:
     ok: bool
     problems: list[str] = field(default_factory=list)
+    # None means the vision model never read this render back: either the check
+    # was skipped (hard checks already failed) or it was unavailable. Combined
+    # with ok=True it means "passed unverified" — the pipeline turns that into a
+    # user-visible warning so a silent QA outage can't masquerade as five
+    # perfect renders.
     transcribed: str | None = None
+
+    @property
+    def unverified(self) -> bool:
+        return self.ok and self.transcribed is None
 
 
 def normalize(text: str) -> list[str]:
@@ -89,11 +99,7 @@ def _feed_size_data_url(path: Path) -> str:
 
 
 def _client(client=None):
-    if client is not None:
-        return client
-    from openai import OpenAI
-
-    return OpenAI()
+    return get_client(client)
 
 
 def check(path: Path, intended_headline: str, client=None) -> QAResult:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import GEN_SIZE, IMAGE_MODEL, IMAGE_QUALITY
 from .models import Variant
+from .openai_client import get_client
 from .prompts import render_prompt
 from .refs import pick_refs
 
@@ -27,11 +28,7 @@ class RenderBlocked(RenderError):
 
 
 def _client(client=None):
-    if client is not None:
-        return client
-    from openai import OpenAI
-
-    return OpenAI()
+    return get_client(client)
 
 
 def _is_moderation(exc: Exception) -> bool:
@@ -87,11 +84,24 @@ def render_variant(
                 # No input_fidelity: gpt-image-2 does not accept it and already
                 # processes every input at high fidelity.
             )
+            # Reading the payload belongs inside the guard: an empty `data` or a
+            # null b64_json would otherwise raise IndexError/TypeError, which is
+            # not a RenderError and so would escape the per-variant handler and
+            # take all five variants down with it.
+            payload = getattr(result, "data", None) or []
+            if not payload:
+                raise RenderError("The image API returned no image.")
+            encoded = getattr(payload[0], "b64_json", None)
+            if not encoded:
+                raise RenderError(
+                    "The image API returned a response with no image data."
+                )
+            return base64.b64decode(encoded)
+        except RenderError:
+            raise
         except Exception as exc:
             if _is_moderation(exc):
                 raise RenderBlocked(
                     "The content filter refused this render."
                 ) from exc
             raise RenderError(f"Image generation failed: {exc}") from exc
-
-    return base64.b64decode(result.data[0].b64_json)

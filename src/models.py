@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 HookType = Literal["stat", "question", "conflict", "pain", "outcome"]
 Treatment = Literal[
@@ -52,7 +52,13 @@ MAX_HEADLINE_WORDS = 5
 
 
 class Variant(BaseModel):
-    index: int = Field(ge=1, le=5)
+    # No Field(ge=..., le=...) here, and no Field(min_length=...) on
+    # BatchPlan.variants: both emit JSON Schema keywords (minimum/maximum,
+    # minItems/maxItems) that the strict structured-output schema may reject,
+    # which would 400 every planner call. The same rules are enforced in
+    # Python by BatchPlan.validate_matrix() instead. field_validators are safe
+    # — they run after parsing and emit no schema keywords.
+    index: int
     hook_type: HookType
     treatment: Treatment
     headline: str
@@ -78,10 +84,28 @@ class Variant(BaseModel):
 class BatchPlan(BaseModel):
     ad_summary: str
     transcript_used: bool
-    variants: list[Variant] = Field(min_length=5, max_length=5)
+    variants: list[Variant]
 
     def validate_matrix(self) -> None:
-        """Fail loudly if the model drifted off the locked pairing."""
+        """Fail loudly if the model drifted off the locked pairing.
+
+        This is the *only* guard on variant count and index range — see the
+        comment on Variant.index for why they cannot be schema constraints.
+        """
+        if len(self.variants) != len(MATRIX):
+            raise ValueError(
+                f"plan does not follow the locked matrix: expected exactly "
+                f"{len(MATRIX)} variants, got {len(self.variants)}"
+            )
+
+        indexes = sorted(v.index for v in self.variants)
+        expected_indexes = sorted(row[0] for row in MATRIX)
+        if indexes != expected_indexes:
+            raise ValueError(
+                f"plan does not follow the locked matrix: indexes must be "
+                f"{expected_indexes}, got {indexes}"
+            )
+
         actual = [(v.index, v.hook_type, v.treatment) for v in self.variants]
         if sorted(actual) != sorted(MATRIX):
             raise ValueError(

@@ -113,3 +113,28 @@ def test_check_survives_a_vision_failure_without_blocking_the_batch(tmp_path):
     result = qa.check(_write(tmp_path / "d.png"), "47K OVER", client=Broken())
     assert result.ok            # unverified, but not a failure
     assert result.transcribed is None
+
+
+def test_an_unavailable_vision_model_marks_the_result_unverified(tmp_path):
+    class Broken:
+        class responses:
+            @staticmethod
+            def create(**kwargs):
+                raise RuntimeError("vision down")
+
+    result = qa.check(_write(tmp_path / "e.png"), "47K OVER", client=Broken())
+    assert result.ok
+    assert result.unverified, "a silent fail-open is what I7 is about"
+
+
+def test_a_verified_pass_is_not_marked_unverified(tmp_path):
+    result = qa.check(_write(tmp_path / "f.png"), "47K OVER",
+                      client=FakeClient("47K OVER"))
+    assert not result.unverified
+
+
+def test_a_failed_check_is_not_marked_unverified(tmp_path):
+    result = qa.check(_write(tmp_path / "g.png"), "47K OVER",
+                      client=FakeClient("nothing here"))
+    assert not result.ok
+    assert not result.unverified
