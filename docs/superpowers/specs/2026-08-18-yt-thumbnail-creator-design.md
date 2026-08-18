@@ -98,8 +98,14 @@ Each module has one job, a typed interface, and no knowledge of the UI.
 - `render_variant(variant: Variant, frames: dict[str, Path], refs: list[Path])
   -> Path` — one `images.edit` call to `gpt-image-2`.
 - Called five times concurrently via `concurrent.futures.ThreadPoolExecutor`.
-- Params: `size="2048x1152"` (native 16:9, within gpt-image-2's constraints:
-  multiples of 16, max edge 3840), `quality="high"`, `output_format="png"`.
+- Params: `size="2048x1152"`, `quality="high"`, `output_format="png"`.
+- **Final deliverable is exactly 1920×1080.** gpt-image-2 requires both edges to
+  be multiples of 16, and 1080 is not (67.5), so 1920×1080 cannot be generated
+  directly. We generate at 2048×1152 — the nearest native 16:9 size that satisfies
+  the constraint — and downscale to 1920×1080 with Pillow's Lanczos filter. This
+  is preferable to generating 1920×1088 and cropping: the aspect ratio stays
+  exact, nothing is cut off, and supersampling then downscaling visibly sharpens
+  the headline type.
 - Reference images passed to the edits endpoint: the variant's chosen frame from
   the ad, plus two or three house-style thumbnails. gpt-image-2 processes every
   input at high fidelity automatically — there is no `input_fidelity` parameter
@@ -195,9 +201,12 @@ OpenAI's documentation states gpt-image-2 "can still struggle with precise text
 placement and clarity." Our thumbnails are headline-dominant, so verification is
 not optional.
 
-1. **Hard checks** — valid PNG, dimensions ≥ 1280×720, file ≤ 2 MB (YouTube's
-   thumbnail cap). Oversize files are re-encoded once at lower compression before
-   being called a failure.
+1. **Hard checks** — valid image, dimensions exactly 1920×1080 after the
+   downscale, file ≤ 2 MB (YouTube's thumbnail cap, comfortably above its
+   1280×720 minimum). **Oversize is expected**: a dense full-bleed 1920×1080 PNG
+   runs right up against 2 MB. On overflow the file is re-encoded as JPEG at
+   quality 92 — which YouTube accepts and which lands well under the cap with no
+   visible loss. Only a still-oversize file counts as a failure.
 2. **Legibility check** — the render is downscaled to 320px wide and sent to
    `gpt-5.6-terra` vision with: *"Transcribe every word of text you can read in this
    image."* The transcription is compared to the intended headline, normalized
@@ -282,7 +291,8 @@ copied into `refs/style/` as the locked style pack.
 ## 12. Cost
 
 gpt-image-2 is priced per token, not per image: $8.00/1M image input, $30.00/1M
-image output. A 2048×1152 high-quality render plus three reference images works
+image output. A 2048×1152 high-quality render (downscaled to 1920×1080 locally, at no API
+cost) plus three reference images works
 out to roughly $0.15, so a five-thumbnail batch costs approximately $0.75–$1.00,
 plus a few cents for planning and QA calls. These are estimates from token
 pricing and should be confirmed against real runs and OpenAI's cost calculator
@@ -342,7 +352,8 @@ YT Thumbnail creator/
   `gpt-5.6-terra` for the QA legibility read, `gpt-transcribe` for audio.
   Model IDs live in one `config.py` constant block so a model refresh is a
   one-line change.
-- Output: five PNGs at 2048×1152, 16:9, one batch per run.
+- Output: five files at exactly 1920×1080, 16:9, one batch per run. Generated
+  at 2048×1152 and downscaled. PNG, falling back to JPEG q92 if over 2 MB.
 - Variants: mixed matrix — five hooks paired with five treatments, fixed pairing.
 - Ingestion: frames plus audio track, not full-video upload.
 - Controls: Drive link, optional headline override, optional context box. No
