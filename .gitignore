@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.streamlit/secrets.toml
+out/
+tmp/
+# large source footage stays local
+Sample input ad/
+*.mp4
