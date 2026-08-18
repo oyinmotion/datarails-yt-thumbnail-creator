@@ -51,3 +51,28 @@ def test_batch_folder_name_survives_a_name_with_no_extension():
     assert app.batch_folder_name("ad", "2026-08-18") == (
         "thumbnails — ad — 2026-08-18"
     )
+
+
+def test_should_show_outcome_matching_link():
+    link = "https://drive.google.com/file/d/abc123/view"
+    assert app.should_show_outcome(link, link) is True
+
+
+def test_should_show_outcome_different_link():
+    stored = "https://drive.google.com/file/d/abc123/view"
+    current = "https://drive.google.com/file/d/xyz789/view"
+    assert app.should_show_outcome(stored, current) is False
+
+
+def test_should_show_outcome_no_stored_link():
+    assert app.should_show_outcome(None, "https://drive.google.com/file/d/abc123/view") is False
+
+
+def test_should_show_outcome_ignores_surrounding_whitespace():
+    link = "https://drive.google.com/file/d/abc123/view"
+    assert app.should_show_outcome(f"  {link}  ", link) is True
+
+
+def test_should_show_outcome_empty_current_link_does_not_match_stored():
+    stored = "https://drive.google.com/file/d/abc123/view"
+    assert app.should_show_outcome(stored, "") is False

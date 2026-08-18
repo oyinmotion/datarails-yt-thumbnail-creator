@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import tempfile
 import zipfile
 from datetime import date
@@ -29,6 +30,13 @@ def zip_bytes(results: list[ThumbResult]) -> bytes:
 
 def batch_folder_name(video_name: str, stamp: str) -> str:
     return f"thumbnails — {Path(video_name).stem} — {stamp}"
+
+
+def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
+    """The grid belongs to the link that produced it, not whatever is typed now."""
+    if not stored_link:
+        return False
+    return stored_link.strip() == current_link.strip()
 
 
 # --- secrets ---------------------------------------------------------------
@@ -105,6 +113,14 @@ def main() -> None:
         )
 
     if st.button("Generate 5 thumbnails", type="primary", disabled=not link):
+        # A fresh attempt invalidates whatever the previous attempt left
+        # behind — both the stale grid and the disk space it was using.
+        previous_work_dir = st.session_state.pop("work_dir", None)
+        if previous_work_dir:
+            shutil.rmtree(previous_work_dir, ignore_errors=True)
+        for key in ("outcome", "outcome_link", "parent_id", "video_name"):
+            st.session_state.pop(key, None)
+
         try:
             file_id = drive.parse_file_id(link)
         except drive.DriveLinkError as exc:
@@ -113,6 +129,7 @@ def main() -> None:
 
         status = st.status("Starting…", expanded=True)
         work_dir = Path(tempfile.mkdtemp(prefix="ytthumb_"))
+        video: Path | None = None
         try:
             status.update(label="Fetching the ad from Drive…")
             video, parent_id = drive.fetch_video(file_id, credentials, work_dir)
@@ -126,17 +143,26 @@ def main() -> None:
             status.update(label="Done.", state="complete")
 
             st.session_state["outcome"] = outcome
+            st.session_state["outcome_link"] = link
             st.session_state["video_name"] = video.name
             st.session_state["parent_id"] = parent_id
-            # Free the 86MB source immediately; renders live in work_dir/out.
-            video.unlink(missing_ok=True)
+            # Renders live in work_dir/out and the download buttons read them
+            # back later, so keep the tree — just not the 86MB source video.
+            st.session_state["work_dir"] = work_dir
         except (drive.DriveError, RuntimeError) as exc:
             status.update(label="Failed.", state="error")
             st.error(str(exc))
+            # Nothing in work_dir is retained when the batch failed.
+            shutil.rmtree(work_dir, ignore_errors=True)
             st.stop()
+        finally:
+            # The video is only needed while generate_batch runs — free it on
+            # both the success and failure paths.
+            if video is not None:
+                video.unlink(missing_ok=True)
 
     outcome = st.session_state.get("outcome")
-    if outcome:
+    if outcome and should_show_outcome(st.session_state.get("outcome_link"), link):
         for warning in outcome.warnings:
             st.warning(warning)
         st.caption(f"**What the ad is about:** {outcome.plan.ad_summary}")
