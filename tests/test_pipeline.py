@@ -145,9 +145,28 @@ def test_blocked_render_retries_with_a_different_frame(
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert len(outcome.results) == 5
     assert all(r.path is not None for r in outcome.results)
-    assert all(override is not None for _, override in attempts[5:]), (
-        "the reroll must try a different frame than the blocked one"
-    )
+
+    # Order-independent: group by variant instead of relying on global append
+    # order. One variant is handled start-to-finish by a single worker, so
+    # each variant's own two attempts are in order even though the five
+    # variants interleave with each other under concurrency.
+    by_variant: dict[int, list[Path | None]] = {}
+    for index, override in attempts:
+        by_variant.setdefault(index, []).append(override)
+
+    assert len(by_variant) == 5
+    for index, overrides in by_variant.items():
+        assert len(overrides) == 2, (
+            f"variant {index} should render exactly twice (attempt + reroll)"
+        )
+        first, second = overrides
+        assert first is None, (
+            f"variant {index}'s first attempt should use its planned frame"
+        )
+        assert second is not None, (
+            f"variant {index}'s reroll must try a different frame than the "
+            "blocked one"
+        )
 
 
 def test_missing_audio_is_a_warning_not_a_failure(wired, tmp_path, monkeypatch):

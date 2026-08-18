@@ -2,11 +2,6 @@
 
 The hard contract: the caller always receives exactly five result rows. A failed
 render is a row with path=None and a readable note, never a missing tile.
-
-Rerolls run as a distinct second phase (not a loop inside each worker) so that
-every variant's first attempt completes before any variant's reroll starts.
-That phase separation is what makes "exactly one reroll per variant" a
-deterministic guarantee under real thread scheduling, not just true on average.
 """
 
 from __future__ import annotations
@@ -52,31 +47,53 @@ def _other_frame(frames: dict[str, Path], used: str) -> Path | None:
     return None
 
 
-def _attempt(
+def _one_variant(
     variant: Variant,
     frames: dict[str, Path],
     out_dir: Path,
     client,
-    extra_instruction: str = "",
-    frame_override: Path | None = None,
-) -> dict:
-    """One render + finalize + QA pass. Returns a small status dict, never raises."""
-    try:
-        raw = render.render_variant(
-            variant, frames, client=client,
-            extra_instruction=extra_instruction,
-            frame_override=frame_override,
-        )
-    except render.RenderBlocked as exc:
-        return {"status": "blocked", "note": f"blocked by content filter: {exc}"}
-    except render.RenderError as exc:
-        return {"status": "error", "note": str(exc)}
+) -> ThumbResult:
+    """Render, finalize, verify. One reroll on failure, then flag and move on."""
+    extra_instruction = ""
+    frame_override: Path | None = None
+    last_note = ""
 
-    path = postprocess.finalize(raw, out_dir / f"{_slug(variant)}.png")
-    result = qa.check(path, variant.headline, client=client)
-    if result.ok:
-        return {"status": "ok", "path": path}
-    return {"status": "qa_fail", "path": path, "note": "; ".join(result.problems)}
+    for attempt in (1, 2):
+        try:
+            raw = render.render_variant(
+                variant, frames, client=client,
+                extra_instruction=extra_instruction,
+                frame_override=frame_override,
+            )
+        except render.RenderBlocked as exc:
+            last_note = f"blocked by content filter: {exc}"
+            frame_override = _other_frame(frames, variant.frame_id)
+            continue
+        except render.RenderError as exc:
+            last_note = str(exc)
+            continue
+
+        path = postprocess.finalize(raw, out_dir / f"{_slug(variant)}.png")
+        result = qa.check(path, variant.headline, client=client)
+        if result.ok:
+            return ThumbResult(variant=variant, path=path)
+
+        last_note = "; ".join(result.problems)
+        if attempt == 1:
+            extra_instruction = (
+                f"The previous attempt failed verification: {last_note}. "
+                "Render the headline larger, fully inside the frame, with more "
+                "space around it, and make every word unmistakably legible."
+            )
+            continue
+
+        # Second failure: still hand it over, flagged. The user decides.
+        return ThumbResult(
+            variant=variant, path=path, flagged=True,
+            note=f"text may be unreadable — {last_note}",
+        )
+
+    return ThumbResult(variant=variant, path=None, flagged=True, note=last_note)
 
 
 def generate_batch(
@@ -119,59 +136,10 @@ def generate_batch(
 
     say("Rendering 5 thumbnails…")
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        first_pass = list(pool.map(
-            lambda v: _attempt(v, frames, out_dir, client),
+        results = list(pool.map(
+            lambda v: _one_variant(v, frames, out_dir, client),
             batch_plan.variants,
         ))
-
-    results: list[ThumbResult | None] = [None] * len(batch_plan.variants)
-    # (index into results, variant, extra_instruction, frame_override)
-    reroll_specs: list[tuple[int, Variant, str, Path | None]] = []
-
-    for i, (variant, outcome) in enumerate(zip(batch_plan.variants, first_pass)):
-        if outcome["status"] == "ok":
-            results[i] = ThumbResult(variant=variant, path=outcome["path"])
-        elif outcome["status"] == "blocked":
-            # Expected occasionally on real faces — retry with a different frame.
-            reroll_specs.append((
-                i, variant, "", _other_frame(frames, variant.frame_id),
-            ))
-        elif outcome["status"] == "error":
-            reroll_specs.append((i, variant, "", None))
-        else:  # qa_fail
-            note = outcome["note"]
-            extra = (
-                f"The previous attempt failed verification: {note}. "
-                "Render the headline larger, fully inside the frame, with more "
-                "space around it, and make every word unmistakably legible."
-            )
-            reroll_specs.append((i, variant, extra, None))
-
-    if reroll_specs:
-        say("Rerolling variants that need a second pass…")
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            second_pass = list(pool.map(
-                lambda spec: _attempt(
-                    spec[1], frames, out_dir, client,
-                    extra_instruction=spec[2], frame_override=spec[3],
-                ),
-                reroll_specs,
-            ))
-
-        for (i, variant, _extra, _override), outcome in zip(reroll_specs, second_pass):
-            if outcome["status"] == "ok":
-                results[i] = ThumbResult(variant=variant, path=outcome["path"])
-            elif outcome["status"] == "qa_fail":
-                # Second failure: still hand it over, flagged. The user decides.
-                results[i] = ThumbResult(
-                    variant=variant, path=outcome["path"], flagged=True,
-                    note=f"text may be unreadable — {outcome['note']}",
-                )
-            else:  # blocked or error again — no image to show
-                results[i] = ThumbResult(
-                    variant=variant, path=None, flagged=True,
-                    note=outcome["note"],
-                )
 
     say("Done.")
     return BatchOutcome(plan=batch_plan, results=results, warnings=warnings)
