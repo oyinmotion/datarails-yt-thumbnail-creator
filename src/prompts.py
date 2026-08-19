@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from .config import PROMPTS_DIR
-from .models import TREATMENT_BRIEF, Variant
+from .models import STYLE_BRIEF, TREATMENT_BRIEF, Variant
 
 
 @lru_cache(maxsize=None)
@@ -19,6 +19,7 @@ def load(name: str) -> str:
 def render_prompt(variant: Variant) -> str:
     return (
         load("render")
+        .replace("{style_brief}", STYLE_BRIEF[variant.style])
         .replace("{treatment_brief}", TREATMENT_BRIEF[variant.treatment])
         .replace("{scene_direction}", variant.scene_direction)
         .replace("{headline}", variant.headline)

@@ -52,7 +52,9 @@ def frames(tmp_path):
 def fake_refs(tmp_path, monkeypatch):
     ref = tmp_path / "style_a.png"
     ref.write_bytes(b"\x89PNG fake")
-    monkeypatch.setattr(render, "pick_refs", lambda treatment, limit=3: [ref])
+    monkeypatch.setattr(
+        render, "pick_refs", lambda style, treatment, limit=3: [ref]
+    )
 
 
 def test_render_returns_decoded_bytes(frames):
@@ -95,7 +97,7 @@ def test_split_screen_sends_both_frames(frames):
 def test_image_array_never_exceeds_the_api_limit(frames, monkeypatch):
     monkeypatch.setattr(
         render, "pick_refs",
-        lambda treatment, limit=3: list(frames.values()) * 20,
+        lambda style, treatment, limit=3: list(frames.values()) * 20,
     )
     client = FakeClient()
     render.render_variant(_variant(), frames, client=client)

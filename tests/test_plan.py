@@ -38,7 +38,7 @@ def _valid_plan():
                 second_frame_id=None, scene_direction="sparks at the seam",
                 rationale="from the dialogue",
             )
-            for i, h, t in MATRIX
+            for i, h, t, _s in MATRIX
         ],
     )
 

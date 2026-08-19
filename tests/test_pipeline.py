@@ -21,7 +21,7 @@ def _plan():
                 frame_id="scene_001.jpg", second_frame_id=None,
                 scene_direction="sparks", rationale="from the ad",
             )
-            for i, h, t in MATRIX
+            for i, h, t, _s in MATRIX
         ],
     )
 
@@ -73,7 +73,7 @@ def test_batch_returns_exactly_five_results(wired, tmp_path):
 def test_every_result_keeps_its_variant_metadata(wired, tmp_path):
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     pairs = {(r.variant.hook_type, r.variant.treatment) for r in outcome.results}
-    assert pairs == {(h, t) for _, h, t in MATRIX}
+    assert pairs == {(h, t) for _, h, t, _s in MATRIX}
 
 
 def test_output_filenames_are_ordered_and_descriptive(wired, tmp_path):

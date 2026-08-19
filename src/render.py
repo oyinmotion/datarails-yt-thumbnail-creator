@@ -63,7 +63,7 @@ def render_variant(
                 "only the primary frame",
                 variant.second_frame_id,
             )
-    image_paths.extend(pick_refs(variant.treatment, limit=3))
+    image_paths.extend(pick_refs(variant.style, variant.treatment, limit=3))
     image_paths = image_paths[:MAX_INPUT_IMAGES]
 
     prompt = render_prompt(variant)

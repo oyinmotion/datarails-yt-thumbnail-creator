@@ -223,7 +223,11 @@ def main() -> None:
                 )
                 if st.button("⭐ Save as reference",
                              key=f"ref_{result.variant.index}"):
-                    refs.save_winner(result.path, result.variant.treatment)
+                    refs.save_winner(
+                        result.path,
+                        result.variant.style,
+                        result.variant.treatment,
+                    )
                     st.success(
                         "Saved as a reference for this session only. The "
                         "server's file system is wiped on every redeploy, so "

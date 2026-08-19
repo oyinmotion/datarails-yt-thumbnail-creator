@@ -24,13 +24,13 @@ def _result(tmp_path, index, hook, treatment, missing=False):
 
 
 def test_zip_contains_every_successful_render(tmp_path):
-    results = [_result(tmp_path, i, h, t) for i, h, t in MATRIX]
+    results = [_result(tmp_path, i, h, t) for i, h, t, _s in MATRIX]
     with zipfile.ZipFile(io.BytesIO(app.zip_bytes(results))) as archive:
         assert len(archive.namelist()) == 5
 
 
 def test_zip_skips_failed_renders(tmp_path):
-    results = [_result(tmp_path, i, h, t) for i, h, t in MATRIX]
+    results = [_result(tmp_path, i, h, t) for i, h, t, _s in MATRIX]
     results[2] = _result(tmp_path, 3, "conflict", "full_bleed", missing=True)
     with zipfile.ZipFile(io.BytesIO(app.zip_bytes(results))) as archive:
         assert len(archive.namelist()) == 4
