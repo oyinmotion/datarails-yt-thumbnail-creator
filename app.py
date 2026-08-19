@@ -85,7 +85,13 @@ def require_sign_in():
     )
 
     code = st.query_params.get("code")
+    if code and st.session_state.get("consumed_code") == code:
+        # A rerun re-delivered a code we already exchanged. Clear it rather than
+        # spending it twice — Google rejects the second attempt.
+        st.query_params.clear()
+        code = None
     if code:
+        st.session_state["consumed_code"] = code
         if not oauth_state_matches(st.session_state.get("oauth_state"),
                                    st.query_params.get("state")):
             st.session_state.pop("oauth_state", None)
@@ -126,6 +132,10 @@ def main() -> None:
     # which reads os.environ only — export the key before anything reaches the
     # pipeline so it's there regardless of how secrets are wired.
     os.environ.setdefault("OPENAI_API_KEY", _secret("OPENAI_API_KEY"))
+    # Google returns a wider scope set than we request — it adds `openid` — and
+    # oauthlib treats that as a tampering error and refuses the token. Relaxing
+    # the check is the documented way to accept Google's own expansion.
+    os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     credentials = require_sign_in()
 
     st.title("🎬 YT Thumbnail Creator")

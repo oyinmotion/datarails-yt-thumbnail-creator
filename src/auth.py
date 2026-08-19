@@ -84,11 +84,17 @@ def _email_from_credentials(credentials) -> str:
         return service.userinfo().get().execute().get("email", "")
     except (OAuth2Error, RequestException) as exc:
         log.warning("Failed to fetch email from credentials", exc_info=True)
-        raise AuthError("Sign-in didn't complete. Please try again.") from exc
+        raise AuthError(
+            "Sign-in didn't complete. Please try again. "
+            f"(technical reason: {type(exc).__name__})"
+        ) from exc
     except Exception as exc:
         log.warning("Unexpected error fetching email from credentials",
                     exc_info=True)
-        raise AuthError("Sign-in didn't complete. Please try again.") from exc
+        raise AuthError(
+            "Sign-in didn't complete. Please try again. "
+            f"(technical reason: {type(exc).__name__})"
+        ) from exc
 
 
 def exchange_code(
@@ -98,11 +104,17 @@ def exchange_code(
         flow.fetch_token(code=code)
     except (OAuth2Error, RequestException) as exc:
         log.warning("OAuth token exchange failed", exc_info=True)
-        raise AuthError("Sign-in didn't complete. Please try again.") from exc
+        raise AuthError(
+            "Sign-in didn't complete. Please try again. "
+            f"(technical reason: {type(exc).__name__})"
+        ) from exc
     except Exception as exc:
         log.warning("Unexpected error during OAuth token exchange",
                     exc_info=True)
-        raise AuthError("Sign-in didn't complete. Please try again.") from exc
+        raise AuthError(
+            "Sign-in didn't complete. Please try again. "
+            f"(technical reason: {type(exc).__name__})"
+        ) from exc
 
     credentials = flow.credentials
     email = _email_from_credentials(credentials)
