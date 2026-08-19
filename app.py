@@ -74,24 +74,36 @@ def _secret(name: str) -> str:
 
 
 # --- sign-in ---------------------------------------------------------------
+@st.cache_resource(show_spinner=False, ttl=600, max_entries=64)
+def _exchange_once(
+    code: str,
+    client_id: str,
+    client_secret: str,
+    redirect_uri: str,
+    allowlist: tuple[str, ...],
+):
+    """Exchange an authorization code exactly once.
+
+    An authorization code is single-use: Google rejects a second attempt with
+    invalid_grant. session_state cannot dedupe this, because arriving back from
+    Google is a fresh page load with empty session_state, and Streamlit may run
+    the script more than once per load. A resource cache keyed on the code is
+    shared across runs and sessions, so the exchange happens once and every
+    later run reads the result.
+    """
+    flow = auth.build_flow(client_id, client_secret, redirect_uri)
+    return auth.exchange_code(flow, code, allowlist=set(allowlist))
+
+
 def require_sign_in():
     if "credentials" in st.session_state:
         return st.session_state["credentials"]
 
-    flow = auth.build_flow(
-        _secret("GOOGLE_CLIENT_ID"),
-        _secret("GOOGLE_CLIENT_SECRET"),
-        _secret("REDIRECT_URI"),
-    )
-
     code = st.query_params.get("code")
-    if code and st.session_state.get("consumed_code") == code:
-        # A rerun re-delivered a code we already exchanged. Clear it rather than
-        # spending it twice — Google rejects the second attempt.
-        st.query_params.clear()
-        code = None
     if code:
-        st.session_state["consumed_code"] = code
+        # A state mismatch is only meaningful when a state was recorded. The
+        # redirect back from Google is a fresh page load, so session_state is
+        # usually empty here and there is nothing to compare — see README.
         if not oauth_state_matches(st.session_state.get("oauth_state"),
                                    st.query_params.get("state")):
             st.session_state.pop("oauth_state", None)
@@ -103,8 +115,12 @@ def require_sign_in():
             st.stop()
         st.session_state.pop("oauth_state", None)
         try:
-            credentials, email = auth.exchange_code(
-                flow, code, allowlist=_allowlist()
+            credentials, email = _exchange_once(
+                code,
+                _secret("GOOGLE_CLIENT_ID"),
+                _secret("GOOGLE_CLIENT_SECRET"),
+                _secret("REDIRECT_URI"),
+                tuple(sorted(_allowlist())),
             )
         except auth.AuthError as exc:
             st.error(str(exc))
@@ -115,6 +131,11 @@ def require_sign_in():
         st.query_params.clear()
         st.rerun()
 
+    flow = auth.build_flow(
+        _secret("GOOGLE_CLIENT_ID"),
+        _secret("GOOGLE_CLIENT_SECRET"),
+        _secret("REDIRECT_URI"),
+    )
     url, state = auth.authorization_url(flow)
     st.session_state["oauth_state"] = state
     st.title("🎬 YT Thumbnail Creator")
