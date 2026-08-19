@@ -127,6 +127,18 @@ REDIRECT_URI = "https://your-app.streamlit.app"
 `REDIRECT_URI` must match the URL in step 3 exactly — no trailing slash. Reboot
 the app.
 
+**Optional but recommended:** add `ALLOWED_EMAILS` to restrict the tool to named
+people instead of everyone in the Workspace. Every batch spends from one shared
+OpenAI key, so this is a budget control as much as an access control:
+
+```toml
+ALLOWED_EMAILS = "omer.y@datarails.com, someone@datarails.com"
+```
+
+Commas, spaces or newlines all work. Leave it out to allow any @datarails.com
+account. Changing it takes effect on the next sign-in — no redeploy needed. The
+domain check still applies on top, so a typo cannot let an outsider in.
+
 **5. Check it yourself, then have one teammate check it.** Sign in, run one
 batch, download a file, save to Drive. Then ask someone else to do the same —
 that is the only way to confirm the multi-user path, which is the whole reason

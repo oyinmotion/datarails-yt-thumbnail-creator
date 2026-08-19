@@ -57,6 +57,12 @@ def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
 
 
 # --- secrets ---------------------------------------------------------------
+def _allowlist() -> set[str]:
+    """Optional ALLOWED_EMAILS secret. Absent means every @datarails.com account."""
+    raw = st.secrets.get("ALLOWED_EMAILS", os.environ.get("ALLOWED_EMAILS", ""))
+    return auth.parse_allowlist(raw)
+
+
 def _secret(name: str) -> str:
     value = st.secrets.get(name, os.environ.get(name, ""))
     if not value:
@@ -91,7 +97,9 @@ def require_sign_in():
             st.stop()
         st.session_state.pop("oauth_state", None)
         try:
-            credentials, email = auth.exchange_code(flow, code)
+            credentials, email = auth.exchange_code(
+                flow, code, allowlist=_allowlist()
+            )
         except auth.AuthError as exc:
             st.error(str(exc))
             st.query_params.clear()

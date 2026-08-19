@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -18,7 +19,25 @@ class AuthError(RuntimeError):
     """Sign-in failed or the account isn't allowed."""
 
 
-def is_allowed_email(email: str | None) -> bool:
+def parse_allowlist(raw: str | None) -> set[str]:
+    """Read an ALLOWED_EMAILS secret into a set.
+
+    Accepts commas, semicolons, newlines or spaces as separators so whoever
+    maintains the secret cannot get the format wrong. An empty or missing value
+    means "no allowlist" — every @datarails.com account is accepted.
+    """
+    if not raw:
+        return set()
+    parts = re.split(r"[,;\s]+", raw.strip())
+    return {p.strip().lower() for p in parts if p.strip()}
+
+
+def is_allowed_email(email: str | None, allowlist: set[str] | None = None) -> bool:
+    """Domain gate, plus an optional per-person allowlist.
+
+    The domain check is never skipped: an allowlisted address still has to be on
+    the company domain, so a typo in the secret cannot let an outsider in.
+    """
     if not email:
         return False
     cleaned = email.strip().lower()
@@ -26,7 +45,11 @@ def is_allowed_email(email: str | None) -> bool:
     if "@" not in cleaned:
         return False
     local_part, domain = cleaned.rsplit("@", 1)
-    return bool(local_part) and domain == ALLOWED_EMAIL_DOMAIN
+    if not (bool(local_part) and domain == ALLOWED_EMAIL_DOMAIN):
+        return False
+    if allowlist:
+        return cleaned in allowlist
+    return True
 
 
 def build_flow(client_id: str, client_secret: str, redirect_uri: str) -> Flow:
@@ -68,7 +91,9 @@ def _email_from_credentials(credentials) -> str:
         raise AuthError("Sign-in didn't complete. Please try again.") from exc
 
 
-def exchange_code(flow, code: str) -> tuple[object, str]:
+def exchange_code(
+    flow, code: str, allowlist: set[str] | None = None
+) -> tuple[object, str]:
     try:
         flow.fetch_token(code=code)
     except (OAuth2Error, RequestException) as exc:
@@ -81,7 +106,14 @@ def exchange_code(flow, code: str) -> tuple[object, str]:
 
     credentials = flow.credentials
     email = _email_from_credentials(credentials)
-    if not is_allowed_email(email):
+    if not is_allowed_email(email, allowlist):
+        if allowlist and email and email.strip().lower().endswith(
+            f"@{ALLOWED_EMAIL_DOMAIN}"
+        ):
+            raise AuthError(
+                f"{email} isn't on this tool's access list yet. Ask Omer to add "
+                "you."
+            )
         raise AuthError(
             f"{email or 'That account'} isn't a {ALLOWED_EMAIL_DOMAIN} account. "
             "Sign in with your Datarails email."
