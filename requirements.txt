@@ -1,0 +1,9 @@
+streamlit>=1.58
+openai>=2.0
+pydantic>=2.9
+pillow>=11.0
+google-api-python-client>=2.140
+google-auth-oauthlib>=1.2
+oauthlib>=3.3
+requests>=2.34
+pytest>=8.0
