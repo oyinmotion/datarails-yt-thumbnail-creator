@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
+import logging
 import os
 import shutil
 import tempfile
@@ -104,10 +105,22 @@ def _exchange_once(
     shared across runs and sessions, so the exchange happens once and every
     later run reads the result.
     """
-    flow = auth.build_flow(client_id, client_secret, redirect_uri)
-    return auth.exchange_code(
-        flow, code, allowlist=set(allowlist), code_verifier=code_verifier
-    )
+    try:
+        flow = auth.build_flow(client_id, client_secret, redirect_uri)
+        return auth.exchange_code(
+            flow, code, allowlist=set(allowlist), code_verifier=code_verifier
+        )
+    except auth.AuthError:
+        raise
+    except Exception as exc:
+        # Anything unconverted would surface to the user as a redacted Streamlit
+        # traceback with the cause only in the server logs. Name the class so the
+        # next failure is diagnosable from the screen.
+        log.exception("sign-in failed before or during the token exchange")
+        raise auth.AuthError(
+            "Sign-in didn't complete. Please try again. "
+            f"(technical reason: {type(exc).__name__})"
+        ) from exc
 
 
 def require_sign_in():

@@ -19,7 +19,7 @@ class AuthError(RuntimeError):
     """Sign-in failed or the account isn't allowed."""
 
 
-def parse_allowlist(raw: str | None) -> set[str]:
+def parse_allowlist(raw: object | None) -> set[str]:
     """Read an ALLOWED_EMAILS secret into a set.
 
     Accepts commas, semicolons, newlines or spaces as separators so whoever
@@ -28,7 +28,12 @@ def parse_allowlist(raw: str | None) -> set[str]:
     """
     if not raw:
         return set()
-    parts = re.split(r"[,;\s]+", raw.strip())
+    # TOML allows either form and both are reasonable to write, so accept both:
+    #   ALLOWED_EMAILS = "a@x.com, b@x.com"
+    #   ALLOWED_EMAILS = ["a@x.com", "b@x.com"]
+    if isinstance(raw, (list, tuple, set)):
+        raw = ",".join(str(item) for item in raw)
+    parts = re.split(r"[,;\s]+", str(raw).strip())
     return {p.strip().lower() for p in parts if p.strip()}
 
 

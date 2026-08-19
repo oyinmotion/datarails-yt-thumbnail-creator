@@ -216,3 +216,12 @@ def test_build_flow_produces_a_verifier_when_the_url_is_generated():
         "authorization_url should generate a PKCE verifier to carry forward"
     )
     assert "code_challenge" in url
+
+
+def test_parse_allowlist_accepts_a_toml_array():
+    """ALLOWED_EMAILS = ["a@x", "b@x"] is a natural way to write it in TOML."""
+    assert auth.parse_allowlist(["A@datarails.com", "b@datarails.com"]) == {
+        "a@datarails.com", "b@datarails.com",
+    }
+    assert auth.parse_allowlist(("a@datarails.com",)) == {"a@datarails.com"}
+    assert auth.parse_allowlist([]) == set()
