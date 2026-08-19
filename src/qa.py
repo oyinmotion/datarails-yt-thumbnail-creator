@@ -36,6 +36,8 @@ class QAResult:
     # user-visible warning so a silent QA outage can't masquerade as five
     # perfect renders.
     transcribed: str | None = None
+    # SAME / DIFFERENT / NOBODY / UNCLEAR, or None when the check did not run.
+    likeness: str | None = None
 
     @property
     def unverified(self) -> bool:
@@ -87,11 +89,18 @@ def hard_checks(path: Path) -> list[str]:
     return problems
 
 
-def _feed_size_data_url(path: Path) -> str:
+def _feed_size_data_url(path: Path, width: int = FEED_WIDTH) -> str:
+    """Downscale to `width` and return a data URL.
+
+    The legibility check uses FEED_WIDTH (320) deliberately — that is the size a
+    thumbnail actually occupies in a feed, so text that survives it is text a
+    viewer can read. The likeness check needs more pixels than that to judge a
+    face, so it passes a larger width.
+    """
     with Image.open(path) as im:
         thumb = im.convert("RGB")
-        height = round(thumb.height * FEED_WIDTH / thumb.width)
-        thumb = thumb.resize((FEED_WIDTH, height), Image.LANCZOS)
+        height = round(thumb.height * width / thumb.width)
+        thumb = thumb.resize((width, height), Image.LANCZOS)
         buffer = io.BytesIO()
         thumb.save(buffer, "PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode()
@@ -102,7 +111,48 @@ def _client(client=None):
     return get_client(client)
 
 
-def check(path: Path, intended_headline: str, client=None) -> QAResult:
+def likeness_verdict(
+    render: Path, reference_frame: Path, client=None
+) -> str | None:
+    """Is the person in the render the actor from the ad?
+
+    Returns SAME / DIFFERENT / NOBODY / UNCLEAR, or None if the check could not
+    run. Prompt instructions alone have already proven insufficient here — a
+    model asked for "a real professional" invented one — so this is the gate that
+    actually enforces it.
+    """
+    try:
+        response = _client(client).responses.create(
+            model=QA_MODEL,
+            input=[{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": load("qa_likeness")},
+                    {"type": "input_image",
+                     "image_url": _feed_size_data_url(render, width=512)},
+                    {"type": "input_image",
+                     "image_url": _feed_size_data_url(reference_frame, width=512)},
+                ],
+            }],
+        )
+    except Exception:
+        log.warning("likeness check unavailable; passing unverified",
+                    exc_info=True)
+        return None
+
+    answer = (getattr(response, "output_text", "") or "").strip().upper()
+    for verdict in ("DIFFERENT", "NOBODY", "UNCLEAR", "SAME"):
+        if verdict in answer:
+            return verdict
+    return None
+
+
+def check(
+    path: Path,
+    intended_headline: str,
+    reference_frame: Path | None = None,
+    client=None,
+) -> QAResult:
     problems = hard_checks(path)
     if problems:
         return QAResult(ok=False, problems=problems)
@@ -136,4 +186,23 @@ def check(path: Path, intended_headline: str, client=None) -> QAResult:
             transcribed=transcribed,
         )
 
-    return QAResult(ok=True, problems=[], transcribed=transcribed)
+    # Legibility passed. Now: is it actually our actor?
+    verdict = None
+    if reference_frame is not None:
+        verdict = likeness_verdict(path, reference_frame, client=client)
+        if verdict in ("DIFFERENT", "NOBODY"):
+            problem = (
+                "the person in this thumbnail is not the actor from the ad"
+                if verdict == "DIFFERENT"
+                else "this thumbnail has no person in it at all"
+            )
+            return QAResult(
+                ok=False,
+                problems=[problem],
+                transcribed=transcribed,
+                likeness=verdict,
+            )
+
+    return QAResult(
+        ok=True, problems=[], transcribed=transcribed, likeness=verdict
+    )

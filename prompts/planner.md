@@ -35,6 +35,15 @@ For each variant:
 - `frame_id` — the filename of the frame that best suits this treatment. Pick a
   two-shot for split_screen, a clear single face for face_closeup, a frame where
   the product or screen is visible for product_forward.
+
+  Whatever the treatment, the frame must carry a usable FACE. Prefer a frame
+  where the person is facing the camera or close to it, with an expression a
+  viewer can read at a glance — surprise, doubt, frustration, conviction. Reject
+  frames where the person is in full profile looking out of frame, turned away,
+  blinking mid-word, blurred by motion, or too far from camera for their
+  expression to survive being shrunk to thumbnail size. A thumbnail with no
+  legible human expression does not earn a click, and the frame you choose is
+  what decides that.
 - `second_frame_id` — only for split_screen, if a second frame gives a better
   second actor. Otherwise null.
 - `scene_direction` — one sentence on what the background and composition should

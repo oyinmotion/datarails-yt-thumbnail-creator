@@ -85,7 +85,7 @@ def test_render_prompt_injects_the_slot_style_brief():
     text = prompts.render_prompt(
         _variant(index=2, hook="question", treatment="face_closeup")
     )
-    assert "Near-black background" in text
+    assert "near-black" in text.lower()
 
 
 def test_render_prompt_uses_the_house_brief_for_a_house_slot():
@@ -104,8 +104,8 @@ def test_two_different_slots_get_visibly_different_style_direction():
         _variant(index=4, hook="pain", treatment="text_dominant")
     )
     assert house != flat
-    assert "flat editorial poster" in flat
-    assert "flat editorial poster" not in house
+    assert "flat-colour treatment" in flat
+    assert "flat-colour treatment" not in house
 
 
 def test_render_prompt_no_longer_hardcodes_one_palette_globally():

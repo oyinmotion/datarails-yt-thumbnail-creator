@@ -355,3 +355,51 @@ def test_a_real_2048x1152_render_survives_finalize_and_hard_checks(
         assert qa.hard_checks(result.path) == []
         with Image.open(result.path) as im:
             assert im.size == (FINAL_W, FINAL_H)
+
+
+def test_an_invented_person_triggers_a_reroll_with_likeness_advice(
+    wired, tmp_path, monkeypatch
+):
+    """A likeness failure must not be met with 'render the headline larger'."""
+    instructions = []
+
+    def capturing_render(variant, frames, client=None, extra_instruction="",
+                         frame_override=None):
+        instructions.append(extra_instruction)
+        return b"\x89PNG bytes"
+
+    monkeypatch.setattr(render, "render_variant", capturing_render)
+    monkeypatch.setattr(
+        qa, "check",
+        lambda path, headline, reference_frame=None, **k: QAResult(
+            ok=False,
+            problems=["the person in this thumbnail is not the actor from the ad"],
+            likeness="DIFFERENT",
+        ),
+    )
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert len(outcome.results) == 5
+    reroll_advice = [i for i in instructions if i]
+    assert reroll_advice, "a failed likeness check must produce a reroll"
+    assert any("invent" in i for i in reroll_advice)
+    assert not any("headline larger" in i for i in reroll_advice), (
+        "type advice is useless when the defect is an invented person"
+    )
+
+
+def test_the_likeness_gate_receives_the_frame_the_render_used(
+    wired, tmp_path, monkeypatch
+):
+    seen = []
+
+    def capturing_check(path, headline, reference_frame=None, **kwargs):
+        seen.append(reference_frame)
+        return QAResult(ok=True, transcribed=headline, likeness="SAME")
+
+    monkeypatch.setattr(qa, "check", capturing_check)
+    pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert len(seen) == 5
+    assert all(f is not None for f in seen), (
+        "without a reference frame the likeness gate silently does nothing"
+    )
+    assert all(f.name.startswith("scene_") for f in seen)

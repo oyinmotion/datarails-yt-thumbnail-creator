@@ -97,7 +97,13 @@ def _one_variant(
                 continue
 
             path = postprocess.finalize(raw, out_dir / f"{_slug(variant)}.png")
-            result = qa.check(path, variant.headline, client=client)
+            # The likeness gate compares against the frame this render was
+            # actually built from, which is the override after a blocked reroll.
+            source_frame = frame_override or frames.get(variant.frame_id)
+            result = qa.check(
+                path, variant.headline,
+                reference_frame=source_frame, client=client,
+            )
             if result.ok:
                 return ThumbResult(
                     variant=variant, path=path,
@@ -106,12 +112,23 @@ def _one_variant(
 
             last_note = "; ".join(result.problems)
             if attempt == 1:
-                extra_instruction = (
-                    f"The previous attempt failed verification: {last_note}. "
-                    "Render the headline larger, fully inside the frame, with "
-                    "more space around it, and make every word unmistakably "
-                    "legible."
-                )
+                if result.likeness in ("DIFFERENT", "NOBODY"):
+                    extra_instruction = (
+                        f"The previous attempt failed verification: {last_note}. "
+                        "You generated a person who is not in the reference "
+                        "frames. Do not invent, replace or beautify anyone. Cut "
+                        "the exact person out of the reference frame and place "
+                        "them in front of the background, keeping their face, "
+                        "age, hair, facial hair and clothing identical, with "
+                        "their face large and clearly visible."
+                    )
+                else:
+                    extra_instruction = (
+                        f"The previous attempt failed verification: {last_note}. "
+                        "Render the headline larger, fully inside the frame, "
+                        "with more space around it, and make every word "
+                        "unmistakably legible."
+                    )
                 # No backoff here: the API answered fine, the type was just
                 # illegible. Backoff exists for rate limits and transport
                 # failures, and making the user wait for a taste reroll is
