@@ -159,3 +159,60 @@ def test_a_non_datarails_account_still_gets_the_domain_message(monkeypatch):
                         lambda creds: "someone@gmail.com")
     with pytest.raises(auth.AuthError, match="datarails.com account"):
         auth.exchange_code(FakeFlow(), "code", allowlist={"omer.y@datarails.com"})
+
+
+# --- PKCE code verifier ---------------------------------------------------
+
+
+def test_the_code_verifier_is_set_on_the_flow_before_the_exchange():
+    """Google answers "invalid_grant: Missing code verifier" without this."""
+    class FakeFlow:
+        credentials = object()
+        code_verifier = None
+
+        def fetch_token(self, code=None):
+            assert self.code_verifier == "the-verifier", (
+                "the verifier must be on the flow BEFORE fetch_token runs"
+            )
+
+    flow = FakeFlow()
+    import src.auth as auth_mod
+    original = auth_mod._email_from_credentials
+    auth_mod._email_from_credentials = lambda creds: "omer.y@datarails.com"
+    try:
+        auth.exchange_code(flow, "code", code_verifier="the-verifier")
+    finally:
+        auth_mod._email_from_credentials = original
+    assert flow.code_verifier == "the-verifier"
+
+
+def test_no_verifier_leaves_the_flow_untouched():
+    """PKCE may legitimately be off; passing None must not clobber the flow."""
+    class FakeFlow:
+        credentials = object()
+        code_verifier = "already-set"
+
+        def fetch_token(self, code=None):
+            return None
+
+    flow = FakeFlow()
+    import src.auth as auth_mod
+    original = auth_mod._email_from_credentials
+    auth_mod._email_from_credentials = lambda creds: "omer.y@datarails.com"
+    try:
+        auth.exchange_code(flow, "code", code_verifier=None)
+    finally:
+        auth_mod._email_from_credentials = original
+    assert flow.code_verifier == "already-set"
+
+
+def test_build_flow_produces_a_verifier_when_the_url_is_generated():
+    """The real Flow must actually give us something to carry across."""
+    flow = auth.build_flow("id.apps.googleusercontent.com", "secret",
+                           "https://example.streamlit.app")
+    url, state = auth.authorization_url(flow)
+    assert state
+    assert getattr(flow, "code_verifier", None), (
+        "authorization_url should generate a PKCE verifier to carry forward"
+    )
+    assert "code_challenge" in url

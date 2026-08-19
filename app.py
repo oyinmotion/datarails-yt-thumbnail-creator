@@ -74,6 +74,18 @@ def _secret(name: str) -> str:
 
 
 # --- sign-in ---------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _pending_signins() -> dict[str, str]:
+    """state -> code_verifier, for sign-ins that have left for Google.
+
+    Cannot be session_state: returning from Google is a fresh page load with a
+    fresh session. This lives in the app process, so it survives the round trip
+    and lets the state check actually mean something — an unrecognised state is
+    now a rejection rather than a shrug.
+    """
+    return {}
+
+
 @st.cache_resource(show_spinner=False, ttl=600, max_entries=64)
 def _exchange_once(
     code: str,
@@ -81,6 +93,7 @@ def _exchange_once(
     client_secret: str,
     redirect_uri: str,
     allowlist: tuple[str, ...],
+    code_verifier: str | None = None,
 ):
     """Exchange an authorization code exactly once.
 
@@ -92,7 +105,9 @@ def _exchange_once(
     later run reads the result.
     """
     flow = auth.build_flow(client_id, client_secret, redirect_uri)
-    return auth.exchange_code(flow, code, allowlist=set(allowlist))
+    return auth.exchange_code(
+        flow, code, allowlist=set(allowlist), code_verifier=code_verifier
+    )
 
 
 def require_sign_in():
@@ -104,16 +119,17 @@ def require_sign_in():
         # A state mismatch is only meaningful when a state was recorded. The
         # redirect back from Google is a fresh page load, so session_state is
         # usually empty here and there is nothing to compare — see README.
-        if not oauth_state_matches(st.session_state.get("oauth_state"),
-                                   st.query_params.get("state")):
-            st.session_state.pop("oauth_state", None)
+        returned_state = st.query_params.get("state")
+        pending = _pending_signins()
+        code_verifier = pending.pop(returned_state, None) if returned_state else None
+        if code_verifier is None:
             st.error(
-                "That sign-in link didn't match this browser session, so we "
-                "stopped. Please sign in again."
+                "That sign-in link is no longer valid — it may have been used "
+                "already, or the app restarted while you were signing in. "
+                "Please sign in again."
             )
             st.query_params.clear()
             st.stop()
-        st.session_state.pop("oauth_state", None)
         try:
             credentials, email = _exchange_once(
                 code,
@@ -121,6 +137,7 @@ def require_sign_in():
                 _secret("GOOGLE_CLIENT_SECRET"),
                 _secret("REDIRECT_URI"),
                 tuple(sorted(_allowlist())),
+                code_verifier,
             )
         except auth.AuthError as exc:
             st.error(str(exc))
@@ -137,6 +154,10 @@ def require_sign_in():
         _secret("REDIRECT_URI"),
     )
     url, state = auth.authorization_url(flow)
+    pending = _pending_signins()
+    if len(pending) > 256:          # bounded: abandoned sign-ins must not pile up
+        pending.clear()
+    pending[state] = flow.code_verifier
     st.session_state["oauth_state"] = state
     st.title("🎬 YT Thumbnail Creator")
     st.write("Five YouTube ad thumbnails from one Drive link.")

@@ -165,10 +165,9 @@ change.
 
 ## Known limits
 
-- The OAuth `state` check is inert in practice: Streamlit starts a fresh session
-  after Google's redirect, so the stored state is usually absent and the callback
-  is allowed. The Internal-app Workspace restriction is what actually bounds
-  access. Closing this properly needs a signed cookie or a server-side store.
+- Sign-in state is held in the app process, not a cookie, so if the app restarts
+  or sleeps while you are on Google's consent screen, the callback is rejected
+  and you simply sign in again.
 - `refs/winners/` is written to the app's filesystem, which is ephemeral on
   Streamlit Community Cloud. Starred references last for the session only.
 - Renders get one reroll each. A variant that fails verification twice is still

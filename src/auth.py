@@ -98,8 +98,19 @@ def _email_from_credentials(credentials) -> str:
 
 
 def exchange_code(
-    flow, code: str, allowlist: set[str] | None = None
+    flow,
+    code: str,
+    allowlist: set[str] | None = None,
+    code_verifier: str | None = None,
 ) -> tuple[object, str]:
+    # PKCE: google-auth-oauthlib generates a code_verifier when the sign-in URL
+    # is built and Google requires the same value back here. The Flow that built
+    # the URL is long gone by the time the browser returns, so the caller carries
+    # the verifier across and hands it to us. Without it Google answers
+    # "invalid_grant: Missing code verifier".
+    if code_verifier:
+        flow.code_verifier = code_verifier
+
     try:
         flow.fetch_token(code=code)
     except (OAuth2Error, RequestException) as exc:
