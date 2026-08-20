@@ -1,6 +1,36 @@
 [server]
 maxUploadSize = 200
+# Serves static/ so the brand font can be loaded by the theme below.
+enableStaticServing = true
 
 [theme]
-base = "dark"
-primaryColor = "#F97316"
+# Datarails design system tokens — see the Design System_Datarails skill.
+primaryColor = "#FA3576"              # signature pink: the 'd' dot
+backgroundColor = "#FFF8EE"           # cream, the signature page surface
+secondaryBackgroundColor = "#FFFFFF"  # paper, for cards and inputs
+textColor = "#0C142B"                 # Datarails midnight
+linkColor = "#C81E5C"
+font = "Poppins"
+headingFont = "Poppins"
+baseRadius = "0.75rem"
+
+[[theme.fontFaces]]
+family = "Poppins"
+url = "app/static/fonts/Poppins-Regular.ttf"
+weight = 400
+
+[[theme.fontFaces]]
+family = "Poppins"
+url = "app/static/fonts/Poppins-SemiBold.ttf"
+weight = 600
+
+[[theme.fontFaces]]
+family = "Poppins"
+url = "app/static/fonts/Poppins-Thin.ttf"
+weight = 100
+
+[[theme.fontFaces]]
+family = "Poppins"
+url = "app/static/fonts/Poppins-Italic.ttf"
+weight = 400
+style = "italic"

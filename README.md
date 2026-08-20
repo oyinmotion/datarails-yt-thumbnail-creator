@@ -1,13 +1,15 @@
 # YT Thumbnail Creator
 
-Paste a Google Drive link to a video ad, get five YouTube ad thumbnails at
-1920×1080. Built for the Datarails marketing team.
+Paste a Google Drive link to a video ad, get five thumbnail concepts, each
+rendered at 1920×1080, 1080×1080 and 1080×1920. Built for the Datarails
+marketing team.
 
 ## For the people using it
 
 1. Open the app URL and sign in with your **@datarails.com** Google account.
 2. Paste a Drive link to the ad. Any link you can open, the tool can fetch.
-3. Press **Generate 5 thumbnails**. It takes a few minutes.
+3. Press **Generate 5 thumbnails**. It takes a few minutes and produces 15
+   images — five concepts at three aspect ratios.
 4. Download the ones you like, or **Save to Drive** to drop the batch into a
    dated folder beside the source ad.
 
@@ -57,7 +59,17 @@ Renders are generated at 2048×1152 and downscaled to exactly 1920×1080:
 (1080 ÷ 16 = 67.5), so 1920×1080 cannot be requested directly. Files over
 YouTube's 2 MB cap fall back to JPEG quality 92.
 
-Roughly $1 per batch of five.
+Every render carries the Datarails logo, composited from the real asset rather
+than drawn by the model, in the bottom-left corner — the bottom-right is where
+YouTube stamps its own duration badge. The light or dark variant is chosen by
+measuring that corner, so it stays legible on both dark and near-white art.
+
+If the ad contains no people — a motion graphic, a screen recording — the
+thumbnails are built with no person at all and the house-style references are
+withheld, because those references are finished thumbnails of a different ad and
+the model will otherwise lift an actor out of them.
+
+Roughly $3 per batch: fifteen renders.
 
 ## Running it locally
 
@@ -170,5 +182,9 @@ change.
   and you simply sign in again.
 - `refs/winners/` is written to the app's filesystem, which is ephemeral on
   Streamlit Community Cloud. Starred references last for the session only.
+- Sign-in is remembered for a week in a signed cookie. The credentials stay
+  server-side and are lost when the app restarts, so an occasional re-sign-in is
+  expected. Removing someone from `ALLOWED_EMAILS` takes effect on their next
+  page load, not when the cookie expires.
 - Renders get one reroll each. A variant that fails verification twice is still
   shown, flagged, so you always receive five tiles and decide for yourself.

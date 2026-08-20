@@ -7,3 +7,4 @@ google-auth-oauthlib>=1.2
 oauthlib>=3.3
 requests>=2.34
 pytest>=8.0
+extra-streamlit-components

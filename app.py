@@ -8,15 +8,66 @@ import os
 import shutil
 import tempfile
 import zipfile
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import extra_streamlit_components as stx
 import streamlit as st
 
-from src import auth, drive, refs
+from src import auth, drive, refs, session as dr_session
 from src.pipeline import ThumbResult, generate_batch
 
 log = logging.getLogger(__name__)
+
+# --- brand ------------------------------------------------------------------
+# Tokens from the Datarails design system (Design System_Datarails skill).
+# The palette and font live in .streamlit/config.toml; this is the polish the
+# theme cannot express — surface treatment, the pink accent rule, tile cards.
+BRAND_CSS = """
+<style>
+  .block-container { max-width: 1180px; padding-top: 2.2rem; }
+  h1, h2, h3 { letter-spacing: -0.01em; font-weight: 600; }
+  h1 { font-size: 2.1rem; }
+  /* The signature pink rule under the page title. */
+  h1::after {
+    content: ""; display: block; width: 3.25rem; height: 4px;
+    background: #FA3576; border-radius: 2px; margin-top: .6rem;
+  }
+  /* Cards: paper on cream, hairline in the warm neutral. */
+  div[data-testid="stImageContainer"] img,
+  div[data-testid="stImage"] img {
+    border-radius: .75rem; border: 1px solid #FFEFD9;
+    box-shadow: 0 1px 2px rgba(12,20,43,.06), 0 8px 24px rgba(12,20,43,.05);
+  }
+  div[data-testid="stImageCaption"] {
+    font-size: .8rem; font-weight: 600; color: #0C142B;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  /* Gold, not red, for the "couldn't verify" state — it is a caution. */
+  div[data-testid="stAlertContainer"] { border-radius: .75rem; }
+  .stButton > button, .stDownloadButton > button {
+    border-radius: .625rem; font-weight: 600;
+  }
+  .stDownloadButton > button {
+    border: 1px solid #FFEFD9; background: #FFFFFF; color: #0C142B;
+  }
+  .stDownloadButton > button:hover {
+    border-color: #FA3576; color: #C81E5C;
+  }
+  div[data-testid="stTextInput"] input { background: #FFFFFF; }
+  footer, #MainMenu { visibility: hidden; }
+</style>
+"""
+
+LOGO = Path(__file__).parent / "assets" / "logo_dark.png"
+
+
+def _apply_brand() -> None:
+    """Datarails look: cream surface, navy ink, pink accent, Poppins."""
+    st.markdown(BRAND_CSS, unsafe_allow_html=True)
+    if LOGO.exists():
+        st.logo(str(LOGO), size="large")
+
 
 # --- pure helpers (tested) --------------------------------------------------
 # Everything below the helpers runs inside main(). Streamlit executes this file
@@ -124,9 +175,56 @@ def _exchange_once(
         ) from exc
 
 
+def dr_session_still_allowed(email: str) -> bool:
+    """Re-check the allowlist on every returning visit.
+
+    A cookie must not outlive someone's access: removing them from
+    ALLOWED_EMAILS has to take effect on their next page load, not in a week.
+    """
+    return auth.is_allowed_email(email, _allowlist())
+
+
+def _signing_secret() -> str:
+    """Secret for session cookies. Falls back to the OAuth client secret.
+
+    A dedicated SESSION_SECRET is better — rotating it signs everyone out — but
+    falling back means persistence works with no extra configuration, and the
+    fallback is already a server-side secret of the same sensitivity.
+    """
+    return st.secrets.get(
+        "SESSION_SECRET", os.environ.get("SESSION_SECRET", "")
+    ) or _secret("GOOGLE_CLIENT_SECRET")
+
+
+@st.cache_resource(show_spinner=False)
+def _live_sessions() -> dict[str, object]:
+    """email -> Google credentials, for browsers holding a valid cookie.
+
+    The cookie only proves who you are; the Drive credentials stay server-side.
+    Lost on restart, which is why a returning user whose credentials are gone
+    is sent through Google again rather than half-signed-in.
+    """
+    return {}
+
+
+def _cookies():
+    # Keyed so the component instance is stable across reruns.
+    return stx.CookieManager(key="dr_yt_cookies")
+
+
 def require_sign_in():
     if "credentials" in st.session_state:
         return st.session_state["credentials"]
+
+    cookies = _cookies()
+    token = cookies.get(dr_session.COOKIE_NAME)
+    remembered = dr_session.read_token(token, _signing_secret())
+    if remembered:
+        credentials = _live_sessions().get(remembered)
+        if credentials is not None and dr_session_still_allowed(remembered):
+            st.session_state["credentials"] = credentials
+            st.session_state["email"] = remembered
+            return credentials
 
     code = st.query_params.get("code")
     if code:
@@ -159,6 +257,16 @@ def require_sign_in():
             st.stop()
         st.session_state["credentials"] = credentials
         st.session_state["email"] = email
+        # Remember this browser so the next visit skips Google entirely.
+        _live_sessions()[email.strip().lower()] = credentials
+        cookies.set(
+            dr_session.COOKIE_NAME,
+            dr_session.mint_token(email, _signing_secret()),
+            expires_at=datetime.now() + timedelta(
+                seconds=dr_session.DEFAULT_TTL_SECONDS
+            ),
+            key="set_session_cookie",
+        )
         st.query_params.clear()
         st.rerun()
 
@@ -173,8 +281,9 @@ def require_sign_in():
         pending.clear()
     pending[state] = flow.code_verifier
     st.session_state["oauth_state"] = state
-    st.title("🎬 YT Thumbnail Creator")
-    st.write("Five YouTube ad thumbnails from one Drive link.")
+    _apply_brand()
+    st.title("YT Thumbnail Creator")
+    st.write("Five thumbnail concepts from one Drive link, in three ratios.")
     st.link_button("Sign in with your Datarails Google account", url,
                    type="primary")
     st.stop()
@@ -194,7 +303,8 @@ def main() -> None:
     os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     credentials = require_sign_in()
 
-    st.title("🎬 YT Thumbnail Creator")
+    _apply_brand()
+    st.title("YT Thumbnail Creator")
     st.caption(f"Signed in as {st.session_state.get('email', '')}")
 
     link = st.text_input(

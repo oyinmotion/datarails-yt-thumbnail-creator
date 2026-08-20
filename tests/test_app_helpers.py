@@ -106,3 +106,19 @@ def test_oauth_state_allows_the_callback_when_no_state_was_stored():
     absent stored state means unverifiable, not hostile — refusing it would
     lock every user out."""
     assert app.oauth_state_matches(None, "abc123") is True
+
+
+# --- staying signed in ----------------------------------------------------
+
+
+def test_a_returning_user_is_rechecked_against_the_allowlist(monkeypatch):
+    """A cookie must not outlive someone's access."""
+    monkeypatch.setattr(app, "_allowlist", lambda: {"omer.y@datarails.com"})
+    assert app.dr_session_still_allowed("omer.y@datarails.com")
+    assert not app.dr_session_still_allowed("someone.else@datarails.com")
+
+
+def test_a_returning_user_still_has_to_be_on_the_domain(monkeypatch):
+    monkeypatch.setattr(app, "_allowlist", lambda: set())
+    assert app.dr_session_still_allowed("anyone@datarails.com")
+    assert not app.dr_session_still_allowed("outsider@gmail.com")
