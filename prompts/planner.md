@@ -51,3 +51,17 @@ For each variant:
 - `rationale` — one sentence on why this hook comes out of this ad.
 
 Also return `ad_summary`: one sentence on what the ad is about.
+
+## Does the ad contain people?
+
+Set `people_in_ad` by looking at the frames, not by guessing from the audio.
+
+- `true` if any real person appears on camera — a presenter, an actor, a
+  customer, anyone.
+- `false` if the ad is motion graphics, screen recording, product UI, animation
+  or text on screen with no human on camera.
+
+This matters more than it looks. When it is `false` the thumbnails are built
+with no person at all, and the house-style reference images are withheld,
+because those references are finished thumbnails of a different ad and the
+image model will otherwise lift an actor out of them and into your thumbnail.

@@ -60,3 +60,26 @@ GOOGLE_SCOPES = [
     # subfolder inside a folder this app did not create.
     "https://www.googleapis.com/auth/drive",
 ]
+
+# --- Branding --------------------------------------------------------------
+# Two variants so the mark stays legible on any background: the light one on
+# dark art, the dark one on light art, chosen by measuring the corner.
+LOGO_LIGHT = PROJECT_ROOT / "assets" / "logo_light.png"
+LOGO_DARK = PROJECT_ROOT / "assets" / "logo_dark.png"
+# Fraction of the image's WIDTH the logo spans. Judged at 320px feed size: much
+# under this and the wordmark stops being readable.
+LOGO_WIDTH_FRACTION = 0.16
+LOGO_MARGIN_FRACTION = 0.035
+# Bottom-LEFT, not bottom-right: YouTube stamps its own duration badge in the
+# bottom-right corner and would sit on top of the logo.
+LOGO_CORNER = "bottom-left"
+
+# --- Output ratios ---------------------------------------------------------
+# (generation size, final size). Generation edges must be multiples of 16 for
+# gpt-image-2; the final sizes are the platform-native ones.
+RATIOS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
+    "16x9": ((2048, 1152), (1920, 1080)),   # YouTube thumbnail
+    "1x1": ((1088, 1088), (1080, 1080)),    # square placements
+    "9x16": ((1152, 2048), (1080, 1920)),   # Shorts / vertical
+}
+PRIMARY_RATIO = "16x9"

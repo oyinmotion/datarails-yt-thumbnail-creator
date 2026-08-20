@@ -53,7 +53,7 @@ def fake_refs(tmp_path, monkeypatch):
     ref = tmp_path / "style_a.png"
     ref.write_bytes(b"\x89PNG fake")
     monkeypatch.setattr(
-        render, "pick_refs", lambda style, treatment, limit=3: [ref]
+        render, "pick_refs", lambda style, treatment, limit=3, people_in_ad=True: [ref]
     )
 
 
@@ -97,7 +97,7 @@ def test_split_screen_sends_both_frames(frames):
 def test_image_array_never_exceeds_the_api_limit(frames, monkeypatch):
     monkeypatch.setattr(
         render, "pick_refs",
-        lambda style, treatment, limit=3: list(frames.values()) * 20,
+        lambda style, treatment, limit=3, people_in_ad=True: list(frames.values()) * 20,
     )
     client = FakeClient()
     render.render_variant(_variant(), frames, client=client)
@@ -210,3 +210,30 @@ def test_the_shared_client_factory_sets_a_timeout():
     source = inspect.getsource(openai_client.get_client)
     assert "timeout" in source and "max_retries" in source
     assert config.OPENAI_TIMEOUT_SECONDS < 600
+
+
+def test_a_people_free_ad_gets_no_style_references(frames, monkeypatch):
+    """The locked pack is thumbnails OF PEOPLE — sending one to a motion-graphic
+    ad is how a stranger from another shoot appears in the output."""
+    seen = {}
+    monkeypatch.setattr(
+        render, "pick_refs",
+        lambda style, treatment, limit=3, people_in_ad=True: (
+            seen.update(people_in_ad=people_in_ad) or []
+        ),
+    )
+    client = FakeClient()
+    render.render_variant(_variant(), frames, client=client, people_in_ad=False)
+    assert seen["people_in_ad"] is False
+    # Only the ad's own frame goes up — nothing else.
+    assert len(client.images.calls[0]["image"]) == 1
+
+
+def test_a_people_free_ad_is_told_not_to_draw_a_person(frames):
+    client = FakeClient()
+    render.render_variant(_variant(), frames, client=client, people_in_ad=False)
+    prompt = client.images.calls[0]["prompt"]
+    assert "must contain NO person" in prompt
+    # The prose wraps, so normalise whitespace before matching a phrase.
+    flat = " ".join(prompt.split())
+    assert "Never copy a person out of a reference image" in flat

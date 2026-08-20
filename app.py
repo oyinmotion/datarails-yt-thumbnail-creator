@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import logging
-import logging
 import os
 import shutil
 import tempfile
@@ -24,11 +23,13 @@ log = logging.getLogger(__name__)
 # with __name__ == "__main__", so the guard keeps `import app` importable from
 # the test suite without firing the sign-in flow and st.stop().
 def zip_bytes(results: list[ThumbResult]) -> bytes:
+    """Every successful render, at every ratio, in one archive."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for result in results:
-            if result.path is not None:
-                archive.write(result.path, arcname=result.path.name)
+            for ratio, path in sorted(result.paths.items()):
+                if path is not None:
+                    archive.write(path, arcname=f"{ratio}/{path.name}")
     return buffer.getvalue()
 
 
@@ -317,7 +318,7 @@ def main() -> None:
             if st.button("Save to Drive"):
                 try:
                     url = drive.save_batch(
-                        [r.path for r in successful],
+                        [p for r in successful for p in r.paths.values()],
                         st.session_state["parent_id"],
                         batch_folder_name(st.session_state["video_name"],
                                           date.today().isoformat()),

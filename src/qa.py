@@ -66,7 +66,9 @@ def headline_is_legible(intended: str, transcribed: str) -> bool:
     return index == len(want)
 
 
-def hard_checks(path: Path) -> list[str]:
+def hard_checks(
+    path: Path, expected_size: tuple[int, int] = (FINAL_W, FINAL_H)
+) -> list[str]:
     problems: list[str] = []
     path = Path(path)
 
@@ -80,9 +82,10 @@ def hard_checks(path: Path) -> list[str]:
     except Exception:
         return ["the file isn't a readable image"]
 
-    if size != (FINAL_W, FINAL_H):
+    if size != expected_size:
         problems.append(
-            f"dimensions are {size[0]}x{size[1]}, must be {FINAL_W}x{FINAL_H}"
+            f"dimensions are {size[0]}x{size[1]}, must be "
+            f"{expected_size[0]}x{expected_size[1]}"
         )
     if path.stat().st_size > MAX_BYTES:
         problems.append("the file is too large for YouTube's 2 MB limit")
@@ -152,8 +155,10 @@ def check(
     intended_headline: str,
     reference_frame: Path | None = None,
     client=None,
+    people_in_ad: bool = True,
+    expected_size: tuple[int, int] = (FINAL_W, FINAL_H),
 ) -> QAResult:
-    problems = hard_checks(path)
+    problems = hard_checks(path, expected_size)
     if problems:
         return QAResult(ok=False, problems=problems)
 
@@ -190,6 +195,25 @@ def check(
     verdict = None
     if reference_frame is not None:
         verdict = likeness_verdict(path, reference_frame, client=client)
+
+        if not people_in_ad:
+            # A motion-graphic ad has no actor, so ANY person here was invented
+            # by the model — usually lifted out of a style reference. NOBODY is
+            # the correct outcome, not a defect.
+            if verdict in ("SAME", "DIFFERENT"):
+                return QAResult(
+                    ok=False,
+                    problems=[
+                        "this ad has no people in it, but the thumbnail shows a "
+                        "person the model invented"
+                    ],
+                    transcribed=transcribed,
+                    likeness=verdict,
+                )
+            return QAResult(
+                ok=True, problems=[], transcribed=transcribed, likeness=verdict
+            )
+
         if verdict in ("DIFFERENT", "NOBODY"):
             problem = (
                 "the person in this thumbnail is not the actor from the ad"

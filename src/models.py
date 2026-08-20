@@ -163,6 +163,11 @@ class Variant(BaseModel):
 class BatchPlan(BaseModel):
     ad_summary: str
     transcript_used: bool
+    # Whether the ad's frames contain any real person. A motion-graphic ad has
+    # none, and the thumbnail must then contain none either — otherwise the
+    # style references (which are finished thumbnails, and so contain people)
+    # leak an actor from a completely different ad into the output.
+    people_in_ad: bool = True
     variants: list[Variant]
 
     def validate_matrix(self) -> None:

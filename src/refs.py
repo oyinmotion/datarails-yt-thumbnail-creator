@@ -46,7 +46,9 @@ def winner_refs(style: str | None = None, treatment: str | None = None) -> list[
     return winners
 
 
-def pick_refs(style: str, treatment: str, limit: int = 3) -> list[Path]:
+def pick_refs(
+    style: str, treatment: str, limit: int = 3, people_in_ad: bool = True
+) -> list[Path]:
     """References for one render call.
 
     For the house style, a locked reference is ALWAYS included — that is the
@@ -59,6 +61,13 @@ def pick_refs(style: str, treatment: str, limit: int = 3) -> list[Path]:
     Those styles start prompt-only and accumulate their own references as the
     team approves outputs.
     """
+    if not people_in_ad:
+        # Every image in refs/style/ is a finished thumbnail, and every one
+        # contains the two actors. Handing one to a motion-graphic ad is how a
+        # stranger from a different shoot ends up in the output. Winners are
+        # skipped for the same reason: they were approved for people-led ads.
+        return []
+
     same_style_winners = winner_refs(style, treatment) + winner_refs(style)
 
     if style != HOUSE_STYLE:

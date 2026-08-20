@@ -45,8 +45,10 @@ def render_variant(
     client=None,
     extra_instruction: str = "",
     frame_override: Path | None = None,
+    people_in_ad: bool = True,
+    gen_size: str = GEN_SIZE,
 ) -> bytes:
-    """Render one thumbnail at GEN_SIZE. Returns raw PNG bytes."""
+    """Render one thumbnail at `gen_size`. Returns raw PNG bytes."""
     primary = frame_override or frames.get(variant.frame_id)
     if primary is None:
         raise RenderError(
@@ -63,10 +65,13 @@ def render_variant(
                 "only the primary frame",
                 variant.second_frame_id,
             )
-    image_paths.extend(pick_refs(variant.style, variant.treatment, limit=3))
+    image_paths.extend(
+        pick_refs(variant.style, variant.treatment, limit=3,
+                  people_in_ad=people_in_ad)
+    )
     image_paths = image_paths[:MAX_INPUT_IMAGES]
 
-    prompt = render_prompt(variant)
+    prompt = render_prompt(variant, people_in_ad=people_in_ad)
     if extra_instruction:
         prompt += f"\n\n## Correction for this attempt\n\n{extra_instruction}"
 
@@ -77,7 +82,7 @@ def render_variant(
                 model=IMAGE_MODEL,
                 image=handles,
                 prompt=prompt,
-                size=GEN_SIZE,
+                size=gen_size,
                 quality=IMAGE_QUALITY,
                 output_format="png",
                 n=1,

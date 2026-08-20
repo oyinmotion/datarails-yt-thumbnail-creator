@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src import backoff, pipeline, postprocess, probe, qa, render
+from src import backoff, branding, pipeline, postprocess, probe, qa, render
 from src import plan as plan_module
 from src.config import FINAL_H, FINAL_W, GEN_SIZE
 from src.models import MATRIX, BatchPlan, Variant
@@ -47,12 +47,15 @@ def wired(monkeypatch, tmp_path):
 
     written = []
 
-    def fake_finalize(image_bytes, out_path):
+    def fake_finalize(image_bytes, out_path, final_size=None):
         Path(out_path).write_bytes(image_bytes)
         written.append(Path(out_path))
         return Path(out_path)
 
     monkeypatch.setattr(postprocess, "finalize", fake_finalize)
+    # The stub files above are not real images, so the real logo stamp cannot
+    # open them. Branding has its own tests in tests/test_branding.py.
+    monkeypatch.setattr(branding, "stamp_logo", lambda path, out=None: path)
     monkeypatch.setattr(
         qa, "check",
         lambda path, headline, **k: QAResult(ok=True, transcribed=headline),
@@ -98,7 +101,8 @@ def test_failed_qa_triggers_exactly_one_reroll(wired, tmp_path, monkeypatch):
         ),
     )
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
-    assert calls["render"] == 10          # five variants, one reroll each
+    # Five concepts x three ratios = 15 renders, each rerolled once.
+    assert calls["render"] == 30
     assert len(outcome.results) == 5
     assert all(r.flagged for r in outcome.results)
     assert all(r.path is not None for r in outcome.results)
@@ -110,7 +114,7 @@ def test_reroll_passes_the_failure_reason_back_into_the_prompt(
     seen = []
 
     def capturing_render(variant, frames, client=None, extra_instruction="",
-                         frame_override=None):
+                         frame_override=None, **kwargs):
         seen.append(extra_instruction)
         return b"\x89PNG bytes"
 
@@ -142,10 +146,10 @@ def test_blocked_render_retries_with_a_different_frame(
     attempts = []
 
     def blocked_then_ok(variant, frames, client=None, extra_instruction="",
-                        frame_override=None):
+                        frame_override=None, **kwargs):
         # Keyed on the argument, not a call counter: five variants render
         # concurrently, so a counter would be racy.
-        attempts.append((variant.index, frame_override))
+        attempts.append(((variant.index, kwargs.get("gen_size")), frame_override))
         if frame_override is None:
             raise render.RenderBlocked("filter refused")
         return b"\x89PNG bytes"
@@ -163,10 +167,10 @@ def test_blocked_render_retries_with_a_different_frame(
     for index, override in attempts:
         by_variant.setdefault(index, []).append(override)
 
-    assert len(by_variant) == 5
+    assert len(by_variant) == 15   # five concepts x three ratios
     for index, overrides in by_variant.items():
         assert len(overrides) == 2, (
-            f"variant {index} should render exactly twice (attempt + reroll)"
+            f"{index} should render exactly twice (attempt + reroll)"
         )
         first, second = overrides
         assert first is None, (
@@ -205,7 +209,8 @@ def test_one_variant_blowing_up_unexpectedly_costs_only_that_tile(
     """pool.map re-raises, so an exception that is not a RenderError used to
     take all five variants down with it."""
     def explode_for_variant_three(variant, frames, client=None,
-                                  extra_instruction="", frame_override=None):
+                                  extra_instruction="", frame_override=None,
+                                  **kwargs):
         if variant.index == 3:
             raise TypeError("'NoneType' object is not subscriptable")
         return b"\x89PNG bytes"
@@ -227,11 +232,11 @@ def test_an_unexpected_failure_in_finalize_also_costs_only_one_tile(
     calls = {"n": 0}
     real_fake = postprocess.finalize
 
-    def sometimes_broken(image_bytes, out_path):
+    def sometimes_broken(image_bytes, out_path, final_size=None, **kwargs):
         if "03_" in Path(out_path).name:
             raise OSError("cannot identify image file")
         calls["n"] += 1
-        return real_fake(image_bytes, out_path)
+        return real_fake(image_bytes, out_path, final_size)
 
     monkeypatch.setattr(postprocess, "finalize", sometimes_broken)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
@@ -249,13 +254,17 @@ def test_a_failed_render_backs_off_before_the_reroll(wired, tmp_path, monkeypatc
     monkeypatch.setattr(render, "render_variant", always_fails)
     pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
 
-    # One backoff per variant, before its single reroll — and every delay is
-    # both non-zero and distinct, so the five do not re-collide.
-    assert len(delays) == 5
+    # One backoff per render, so fifteen. The stagger is per CONCEPT, so the
+    # three ratios of one concept share a delay while the five concepts differ —
+    # which is what stops all five re-colliding with the same rate limit.
+    assert len(delays) == 15
     assert all(d > 0 for d in delays)
-    assert len(set(delays)) == 5
-    assert sorted(delays) == sorted(
+    assert sorted(set(delays)) == sorted(
         backoff.delay_for(1, offset=i * backoff.STAGGER) for i in range(1, 6)
+    )
+    from collections import Counter
+    assert set(Counter(delays).values()) == {3}, (
+        "each concept's three ratios should share that concept's delay"
     )
 
 
@@ -364,7 +373,7 @@ def test_an_invented_person_triggers_a_reroll_with_likeness_advice(
     instructions = []
 
     def capturing_render(variant, frames, client=None, extra_instruction="",
-                         frame_override=None):
+                         frame_override=None, **kwargs):
         instructions.append(extra_instruction)
         return b"\x89PNG bytes"
 
@@ -398,7 +407,8 @@ def test_the_likeness_gate_receives_the_frame_the_render_used(
 
     monkeypatch.setattr(qa, "check", capturing_check)
     pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
-    assert len(seen) == 5
+    # Three ratios per concept now.
+    assert len(seen) == 15
     assert all(f is not None for f in seen), (
         "without a reference frame the likeness gate silently does nothing"
     )

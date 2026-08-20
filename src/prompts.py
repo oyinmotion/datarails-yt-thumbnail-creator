@@ -16,14 +16,33 @@ def load(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def render_prompt(variant: Variant) -> str:
-    return (
+NO_PEOPLE_RULE = """
+
+## This ad contains no people
+
+The reference frames for this ad show no person at all — it is motion graphics,
+screen recording or product footage. So this thumbnail must contain NO person:
+no face, no hand, no silhouette, no figure in the background. Do not add a
+presenter, a customer, a model or a stock person to make it feel human. Build
+the frame from the ad's own graphics, the product surface, and typography.
+
+Any people you can see in the house-style reference images are from an unrelated
+ad. They are there to show palette, lighting and type treatment only. Never copy
+a person out of a reference image.
+"""
+
+
+def render_prompt(variant: Variant, people_in_ad: bool = True) -> str:
+    filled = (
         load("render")
         .replace("{style_brief}", STYLE_BRIEF[variant.style])
         .replace("{treatment_brief}", TREATMENT_BRIEF[variant.treatment])
         .replace("{scene_direction}", variant.scene_direction)
         .replace("{headline}", variant.headline)
     )
+    if not people_in_ad:
+        filled += NO_PEOPLE_RULE
+    return filled
 
 
 def planner_prompt(

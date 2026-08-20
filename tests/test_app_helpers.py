@@ -16,30 +16,38 @@ def _result(tmp_path, index, hook, treatment, missing=False):
         second_frame_id=None, scene_direction="sparks", rationale="from the ad",
     )
     if missing:
-        return ThumbResult(variant=variant, path=None, flagged=True,
-                           note="render failed")
-    path = tmp_path / f"{index:02d}_{hook}_{treatment}.png"
-    Image.new("RGB", (1920, 1080), (10, 20, 40)).save(path, "PNG")
-    return ThumbResult(variant=variant, path=path)
+        return ThumbResult(variant=variant, flagged=True, note="render failed")
+    paths = {}
+    for ratio, size in (("16x9", (1920, 1080)), ("1x1", (1080, 1080)),
+                        ("9x16", (1080, 1920))):
+        path = tmp_path / f"{index:02d}_{hook}_{treatment}_{ratio}.png"
+        Image.new("RGB", size, (10, 20, 40)).save(path, "PNG")
+        paths[ratio] = path
+    return ThumbResult(variant=variant, paths=paths)
 
 
 def test_zip_contains_every_successful_render(tmp_path):
     results = [_result(tmp_path, i, h, t) for i, h, t, _s in MATRIX]
     with zipfile.ZipFile(io.BytesIO(app.zip_bytes(results))) as archive:
-        assert len(archive.namelist()) == 5
+        # Five concepts at three ratios each.
+        assert len(archive.namelist()) == 15
 
 
 def test_zip_skips_failed_renders(tmp_path):
     results = [_result(tmp_path, i, h, t) for i, h, t, _s in MATRIX]
     results[2] = _result(tmp_path, 3, "conflict", "full_bleed", missing=True)
     with zipfile.ZipFile(io.BytesIO(app.zip_bytes(results))) as archive:
-        assert len(archive.namelist()) == 4
+        assert len(archive.namelist()) == 12
 
 
 def test_zip_entries_keep_their_descriptive_names(tmp_path):
     results = [_result(tmp_path, 1, "stat", "split_screen")]
     with zipfile.ZipFile(io.BytesIO(app.zip_bytes(results))) as archive:
-        assert archive.namelist() == ["01_stat_split_screen.png"]
+        assert sorted(archive.namelist()) == [
+            "16x9/01_stat_split_screen_16x9.png",
+            "1x1/01_stat_split_screen_1x1.png",
+            "9x16/01_stat_split_screen_9x16.png",
+        ]
 
 
 def test_batch_folder_name_strips_the_extension_and_dates_it():

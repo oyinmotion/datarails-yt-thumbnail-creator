@@ -262,3 +262,27 @@ def test_the_likeness_check_sends_the_render_and_the_frame_in_that_order(tmp_pat
     assert len(images) == 2, "the prompt compares two images"
     assert "qa_likeness" not in content[0]["text"], "prompt text, not a filename"
     assert "same real person" in content[0]["text"]
+
+
+def test_a_people_free_ad_fails_when_a_person_appears(tmp_path):
+    """The reported bug: a motion-graphic ad got a thumbnail with an actor."""
+    for verdict in ("SAME", "DIFFERENT"):
+        result = qa.check(
+            _write(tmp_path / f"p{verdict}.png"), "47K OVER",
+            reference_frame=_frame(tmp_path),
+            client=FakeLikenessClient("47K OVER", verdict),
+            people_in_ad=False,
+        )
+        assert not result.ok
+        assert any("invented" in p for p in result.problems)
+
+
+def test_a_people_free_ad_passes_when_there_is_nobody(tmp_path):
+    result = qa.check(
+        _write(tmp_path / "none.png"), "47K OVER",
+        reference_frame=_frame(tmp_path),
+        client=FakeLikenessClient("47K OVER", "NOBODY"),
+        people_in_ad=False,
+    )
+    assert result.ok
+    assert result.likeness == "NOBODY"

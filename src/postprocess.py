@@ -13,7 +13,11 @@ from PIL import Image
 from .config import FINAL_H, FINAL_W, JPEG_FALLBACK_QUALITY, MAX_BYTES
 
 
-def finalize(image_bytes: bytes, out_path: Path) -> Path:
+def finalize(
+    image_bytes: bytes,
+    out_path: Path,
+    final_size: tuple[int, int] = (FINAL_W, FINAL_H),
+) -> Path:
     """Downscale to 1920x1080 and write, falling back to JPEG if oversize.
 
     Returns the path actually written — the suffix may differ from out_path.
@@ -23,10 +27,10 @@ def finalize(image_bytes: bytes, out_path: Path) -> Path:
 
     with Image.open(io.BytesIO(image_bytes)) as raw:
         image = raw.convert("RGB")
-        if image.size != (FINAL_W, FINAL_H):
+        if image.size != final_size:
             # Lanczos downscale from 2048x1152: exact ratio, no crop, and the
             # supersampling visibly sharpens the headline type.
-            image = image.resize((FINAL_W, FINAL_H), Image.LANCZOS)
+            image = image.resize(final_size, Image.LANCZOS)
 
         image.save(out_path, "PNG", optimize=True)
         if out_path.stat().st_size <= MAX_BYTES:

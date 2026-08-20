@@ -15,26 +15,46 @@ from typing import Callable
 
 from . import backoff
 from . import plan as plan_module
-from . import postprocess, probe, qa, render
+from . import branding, postprocess, probe, qa, render
+from .config import PRIMARY_RATIO, RATIOS
 from .models import BatchPlan, Variant
 
 log = logging.getLogger(__name__)
 
-MAX_WORKERS = 5
+# Five variants times three ratios is fifteen renders per batch, so the pool
+# is wider than the old one-render-per-variant shape.
+MAX_WORKERS = 8
 
 # Module-level so tests can swap in a no-op and stay instant.
 DEFAULT_SLEEPER = time.sleep
 
 
 @dataclass
-class ThumbResult:
+class RenderOutcome:
+    """One variant at one aspect ratio."""
     variant: Variant
+    ratio: str
     path: Path | None
     flagged: bool = False
     note: str = ""
-    # True when the render was handed over without the legibility model ever
+    unverified: bool = False
+
+
+@dataclass
+class ThumbResult:
+    """One concept, rendered at every ratio."""
+    variant: Variant
+    paths: dict[str, Path] = field(default_factory=dict)
+    flagged: bool = False
+    note: str = ""
+    # True when a render was handed over without the legibility model ever
     # reading it back — see QAResult.unverified.
     unverified: bool = False
+
+    @property
+    def path(self) -> Path | None:
+        """The 16:9 render — the YouTube thumbnail, and the tile preview."""
+        return self.paths.get(PRIMARY_RATIO)
 
 
 @dataclass
@@ -55,13 +75,15 @@ def _other_frame(frames: dict[str, Path], used: str) -> Path | None:
     return None
 
 
-def _one_variant(
+def _one_render(
     variant: Variant,
+    ratio: str,
     frames: dict[str, Path],
     out_dir: Path,
     client,
     sleeper=None,
-) -> ThumbResult:
+    people_in_ad: bool = True,
+) -> RenderOutcome:
     """Render, finalize, verify. One reroll on failure, then flag and move on.
 
     Every failure mode is contained here. The five variants run in a thread
@@ -69,6 +91,8 @@ def _one_variant(
     lose all five rows over one bad response — so nothing may escape.
     """
     sleeper = sleeper or DEFAULT_SLEEPER
+    (gen_w, gen_h), final_size = RATIOS[ratio]
+    gen_size = f"{gen_w}x{gen_h}"
     # Deterministic per-variant offset: without it all five variants wake from
     # backoff at the same instant and re-collide with the same rate limit.
     offset = variant.index * backoff.STAGGER
@@ -83,6 +107,8 @@ def _one_variant(
                     variant, frames, client=client,
                     extra_instruction=extra_instruction,
                     frame_override=frame_override,
+                    people_in_ad=people_in_ad,
+                    gen_size=gen_size,
                 )
             except render.RenderBlocked as exc:
                 last_note = f"blocked by content filter: {exc}"
@@ -96,17 +122,24 @@ def _one_variant(
                     backoff.wait(attempt, sleeper=sleeper, offset=offset)
                 continue
 
-            path = postprocess.finalize(raw, out_dir / f"{_slug(variant)}.png")
+            path = postprocess.finalize(
+                raw, out_dir / f"{_slug(variant)}_{ratio}.png",
+                final_size=final_size,
+            )
             # The likeness gate compares against the frame this render was
             # actually built from, which is the override after a blocked reroll.
             source_frame = frame_override or frames.get(variant.frame_id)
             result = qa.check(
                 path, variant.headline,
                 reference_frame=source_frame, client=client,
+                people_in_ad=people_in_ad, expected_size=final_size,
             )
             if result.ok:
-                return ThumbResult(
-                    variant=variant, path=path,
+                # The logo is composited here, after verification: stamping
+                # before the legibility read could hide warped type behind it.
+                path = branding.stamp_logo(path)
+                return RenderOutcome(
+                    variant=variant, ratio=ratio, path=path,
                     unverified=result.unverified,
                 )
 
@@ -136,8 +169,9 @@ def _one_variant(
                 continue
 
             # Second failure: still hand it over, flagged. The user decides.
-            return ThumbResult(
-                variant=variant, path=path, flagged=True,
+            path = branding.stamp_logo(path)
+            return RenderOutcome(
+                variant=variant, ratio=ratio, path=path, flagged=True,
                 note=f"text may be unreadable — {last_note}",
             )
     except Exception as exc:
@@ -145,12 +179,39 @@ def _one_variant(
         # costs exactly one tile instead of the whole batch.
         log.warning("variant %s failed unexpectedly", variant.index,
                     exc_info=True)
-        return ThumbResult(
-            variant=variant, path=None, flagged=True,
+        return RenderOutcome(
+            variant=variant, ratio=ratio, path=None, flagged=True,
             note=f"something went wrong rendering this one ({exc})",
         )
 
-    return ThumbResult(variant=variant, path=None, flagged=True, note=last_note)
+    return RenderOutcome(
+        variant=variant, ratio=ratio, path=None, flagged=True, note=last_note
+    )
+
+
+def _group_by_variant(
+    outcomes: list[RenderOutcome], variants: list[Variant]
+) -> list[ThumbResult]:
+    """Collapse per-ratio outcomes into one row per concept.
+
+    Preserves the hard contract: exactly one row per variant, in matrix order,
+    even if every ratio of that variant failed.
+    """
+    by_index: dict[int, ThumbResult] = {
+        v.index: ThumbResult(variant=v) for v in variants
+    }
+    for outcome in outcomes:
+        row = by_index[outcome.variant.index]
+        if outcome.path is not None:
+            row.paths[outcome.ratio] = outcome.path
+        if outcome.flagged:
+            row.flagged = True
+        if outcome.unverified:
+            row.unverified = True
+        if outcome.note:
+            label = "" if outcome.ratio == PRIMARY_RATIO else f"{outcome.ratio}: "
+            row.note = f"{row.note}; {label}{outcome.note}".lstrip("; ")
+    return [by_index[v.index] for v in variants]
 
 
 def generate_batch(
@@ -193,12 +254,26 @@ def generate_batch(
         warnings.append("No transcript was available; hooks come from the "
                         "frames alone.")
 
-    say("Rendering 5 thumbnails…")
+    if not batch_plan.people_in_ad:
+        warnings.append(
+            "This ad has no people in it, so the thumbnails are built without "
+            "any person and the house-style references are withheld."
+        )
+
+    ratios = list(RATIOS)
+    jobs = [(v, r) for v in batch_plan.variants for r in ratios]
+    say(f"Rendering {len(batch_plan.variants)} concepts × {len(ratios)} "
+        f"ratios = {len(jobs)} images…")
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        results = list(pool.map(
-            lambda v: _one_variant(v, frames, out_dir, client, sleeper=sleeper),
-            batch_plan.variants,
+        outcomes = list(pool.map(
+            lambda job: _one_render(
+                job[0], job[1], frames, out_dir, client, sleeper=sleeper,
+                people_in_ad=batch_plan.people_in_ad,
+            ),
+            jobs,
         ))
+
+    results = _group_by_variant(outcomes, batch_plan.variants)
 
     unverified = sum(1 for r in results if r.unverified)
     if unverified:
