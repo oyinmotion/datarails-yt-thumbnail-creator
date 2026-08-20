@@ -78,3 +78,102 @@ def test_writing_to_a_separate_output_leaves_the_original(tmp_path):
     out = branding.stamp_logo(src, tmp_path / "out.png")
     assert out.exists() and out != src
     assert src.read_bytes() == before
+
+
+# --- the logo must sit on flat colour --------------------------------------
+
+import os
+
+from PIL import ImageDraw
+
+from src.config import LOGO_BUSY_THRESHOLD, LOGO_WIDTH_FRACTION as _WF
+
+
+def _logo_size(width=1920):
+    from PIL import Image as _I
+    target_w = round(width * _WF)
+    with _I.open(LOGO_LIGHT) as probe:
+        return target_w, round(probe.height * target_w / probe.width)
+
+
+def _placement(image):
+    lw, lh = _logo_size(image.width)
+    return branding.plan_placement(image, lw, lh, margin=round(image.width * 0.035))
+
+
+def test_flat_colour_scores_far_below_the_busy_threshold():
+    flat = Image.new("RGB", (600, 200), (12, 24, 48)).convert("RGBA")
+    assert branding.busy_score(flat, (0, 0, 600, 200)) < LOGO_BUSY_THRESHOLD
+
+
+def test_random_texture_scores_above_the_threshold():
+    noise = Image.frombytes("RGB", (600, 200), os.urandom(600 * 200 * 3))
+    score = branding.busy_score(noise.convert("RGBA"), (0, 0, 600, 200))
+    assert score > LOGO_BUSY_THRESHOLD
+
+
+def test_text_scores_above_the_threshold_even_though_it_is_two_colours():
+    """The reason edge energy is in the score: type has little luminance spread
+    across the region but a great many edges."""
+    canvas = Image.new("RGB", (600, 200), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    for y in range(10, 190, 14):
+        draw.text((8, y), "SAME AI DIFFERENT ANSWER 47K", fill=(0, 0, 0))
+    assert branding.busy_score(canvas.convert("RGBA"), (0, 0, 600, 200)) > (
+        LOGO_BUSY_THRESHOLD
+    )
+
+
+def test_a_wholly_flat_image_needs_no_plate():
+    flat = Image.new("RGB", (1920, 1080), (12, 24, 48)).convert("RGBA")
+    placement = _placement(flat)
+    assert not placement.needs_plate
+    assert placement.corner == "bottom-left", "ties resolve to the preferred corner"
+
+
+def test_a_wholly_busy_image_gets_a_plate():
+    """Nowhere is flat, so a flat area is manufactured rather than giving up."""
+    noise = Image.frombytes("RGB", (1920, 1080), os.urandom(1920 * 1080 * 3))
+    assert _placement(noise.convert("RGBA")).needs_plate
+
+
+def test_the_logo_moves_to_the_calm_corner_instead_of_the_default_one():
+    """Busy bottom-left, calm top-right: the logo must not stay put."""
+    canvas = Image.new("RGB", (1920, 1080), (12, 24, 48))
+    busy = Image.frombytes("RGB", (900, 400), os.urandom(900 * 400 * 3))
+    canvas.paste(busy, (0, 680))          # covers the bottom-left corner
+    placement = _placement(canvas.convert("RGBA"))
+    assert placement.corner != "bottom-left"
+    assert not placement.needs_plate, "it found a genuinely flat corner"
+
+
+def test_bottom_right_is_the_last_resort():
+    """YouTube's duration badge lives there, so every other tie wins first."""
+    from src.config import LOGO_CORNERS
+    assert LOGO_CORNERS[-1] == "bottom-right"
+
+
+def test_the_area_under_the_logo_is_flat_after_stamping_a_busy_image(tmp_path):
+    """End to end: the promise is that the logo never sits on texture."""
+    path = tmp_path / "busy.png"
+    original = Image.frombytes("RGB", (1920, 1080), os.urandom(1920 * 1080 * 3))
+    original.save(path)
+
+    lw, lh = _logo_size()
+    margin = round(1920 * 0.035)
+    planned = branding.plan_placement(original.convert("RGBA"), lw, lh, margin)
+    assert planned.needs_plate
+    x0, y0, x1, _y1 = planned.box
+    # A strip inside the plate's padding, above the wordmark itself.
+    plate_strip = (x0, max(0, y0 - 8), x1, max(1, y0 - 2))
+
+    branding.stamp_logo(path)
+
+    # Where the logo WAS going to go, measured before stamping. Re-planning on
+    # the stamped image would measure the wordmark's own letterforms.
+    with Image.open(path) as stamped:
+        rgba = stamped.convert("RGBA")
+
+    assert branding.busy_score(rgba, plate_strip) < LOGO_BUSY_THRESHOLD, (
+        "the plate should have replaced the texture behind the logo"
+    )

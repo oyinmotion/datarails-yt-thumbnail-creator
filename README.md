@@ -60,9 +60,14 @@ Renders are generated at 2048×1152 and downscaled to exactly 1920×1080:
 YouTube's 2 MB cap fall back to JPEG quality 92.
 
 Every render carries the Datarails logo, composited from the real asset rather
-than drawn by the model, in the bottom-left corner — the bottom-right is where
-YouTube stamps its own duration badge. The light or dark variant is chosen by
-measuring that corner, so it stays legible on both dark and near-white art.
+than drawn by the model. It always sits on flat colour — never over texture,
+type or graphics. Each candidate corner is scored for how busy it is, using
+luminance spread plus edge energy so that a wall of small text scores as busy
+even though it is only two colours. The calmest corner wins; if nothing on the
+image is calm enough, a solid brand-coloured plate is drawn to create a flat
+area, navy behind the light logo and cream behind the dark one. Preference runs
+bottom-left first and bottom-right last, because YouTube stamps its own duration
+badge in that corner.
 
 If the ad contains no people — a motion graphic, a screen recording — the
 thumbnails are built with no person at all and the house-style references are

@@ -70,9 +70,25 @@ LOGO_DARK = PROJECT_ROOT / "assets" / "logo_dark.png"
 # under this and the wordmark stops being readable.
 LOGO_WIDTH_FRACTION = 0.16
 LOGO_MARGIN_FRACTION = 0.035
-# Bottom-LEFT, not bottom-right: YouTube stamps its own duration badge in the
-# bottom-right corner and would sit on top of the logo.
-LOGO_CORNER = "bottom-left"
+# Preference order for where the logo goes. The flattest candidate wins; this
+# order only breaks ties. bottom-right is last because YouTube stamps its own
+# duration badge there.
+LOGO_CORNERS = (
+    "bottom-left", "top-left", "top-right", "bottom-centre", "top-centre",
+    "bottom-right",
+)
+LOGO_CORNER = LOGO_CORNERS[0]        # kept for callers that want the default
+
+# Above this "busy" score, no candidate is clean enough to sit the logo on bare,
+# so a solid plate is drawn behind it. The score combines luminance spread with
+# edge energy, so it catches texture, type and graphics — not just contrast.
+LOGO_BUSY_THRESHOLD = 14.0
+LOGO_PLATE_PAD_FRACTION = 0.45       # of the logo's height, per side
+# Plate colours, from the Datarails design system. Navy behind the light logo,
+# cream behind the dark one.
+LOGO_PLATE_DARK = (12, 20, 43)       # --dr-navy  #0C142B
+LOGO_PLATE_LIGHT = (255, 248, 238)   # --dr-cream #FFF8EE
+LOGO_PLATE_ALPHA = 255               # fully opaque: "solid colour" means solid
 
 # --- Output ratios ---------------------------------------------------------
 # (generation size, final size). Generation edges must be multiples of 16 for
