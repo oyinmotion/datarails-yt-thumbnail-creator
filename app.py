@@ -412,12 +412,10 @@ def main() -> None:
                         result.variant.style,
                         result.variant.treatment,
                     )
-                    st.success(
-                        "Saved as a reference for this session only. The "
-                        "server's file system is wiped on every redeploy, so "
-                        "making it permanent means committing the file to "
-                        "refs/winners/ in the repo."
-                    )
+                    # Deliberately says nothing about the filesystem: how long
+                    # it lasts is a maintenance detail, and the caveat lives in
+                    # the README where whoever maintains this will read it.
+                    st.success("Saved — this look will guide future batches.")
 
         successful = [r for r in outcome.results if r.path]
         if successful:
