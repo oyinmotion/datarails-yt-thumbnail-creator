@@ -14,6 +14,14 @@ rules ever conflict, these win.
   person, not a better-looking person, not a more senior-looking person, not a
   stock-photography professional. If the style suggests a different kind of
   person would suit it better, ignore that — use these people.
+- Count the people in the reference frames. Your thumbnail may contain **only**
+  those people, and no more of them than the frames show. If the frames show one
+  person, do not add a second. If they show nobody, the thumbnail contains
+  nobody.
+- Any additional images you were given are there for VISUAL STYLE ONLY —
+  palette, lighting, type treatment, composition. If a person appears in one of
+  them, that person belongs to a different ad and is a stranger here. Never copy,
+  trace or imitate a face from a style image.
 - Keep their face, age, skin tone, hair, facial hair, glasses and clothing
   exactly as they appear in the reference frames, including any logo or graphic
   printed on their clothing.

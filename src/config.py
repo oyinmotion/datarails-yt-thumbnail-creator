@@ -99,3 +99,20 @@ RATIOS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
     "9x16": ((1152, 2048), (1080, 1920)),   # Shorts / vertical
 }
 PRIMARY_RATIO = "16x9"
+
+
+# --- Style references ------------------------------------------------------
+# OFF by default, and this is the single most important line in this file for
+# output correctness.
+#
+# refs/style/ holds four FINISHED thumbnails, and every one shows the two actors
+# from the Claude-vs-Claude ad. Sending one as a "style" reference hands the
+# image model photographs of two specific men — who are strangers in every other
+# ad — and it composites the faces it can see. That is how thumbnails kept
+# coming back with people who were never in the linked ad.
+#
+# The style is now carried by STYLE_BRIEF prose, which is detailed enough to
+# stand alone: palette, lighting, subject treatment and type, per style.
+#
+# Turn this back on only with reference images that contain NO people.
+SEND_STYLE_REFS = False

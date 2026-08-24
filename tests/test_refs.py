@@ -6,7 +6,18 @@ from src import refs
 
 
 @pytest.fixture
-def isolated_refs(tmp_path, monkeypatch):
+def refs_enabled(monkeypatch):
+    """Turn style references back on.
+
+    They are off by default because every file in the pack contains recognisable
+    people (see config.SEND_STYLE_REFS). The selection logic below is still
+    exercised so the feature stays working for a future people-free pack.
+    """
+    monkeypatch.setattr(refs, "SEND_STYLE_REFS", True)
+
+
+@pytest.fixture
+def isolated_refs(tmp_path, monkeypatch, refs_enabled):
     style = tmp_path / "style"
     winners = tmp_path / "winners"
     style.mkdir()
@@ -141,3 +152,40 @@ def test_winner_refs_unfiltered_returns_every_style(isolated_refs, tmp_path):
     refs.save_winner(src_file, "house_energy", "split_screen")
     refs.save_winner(src_file, "dark_cinematic", "face_closeup")
     assert len(refs.winner_refs()) == 2
+
+
+# --- style references are off by default ----------------------------------
+
+
+def test_no_references_are_sent_by_default(isolated_refs, monkeypatch):
+    """The bug this closes: thumbnails containing people from a different ad.
+
+    Every file in refs/style/ is a finished thumbnail of the Claude-vs-Claude
+    actors. Sent as a "style" reference into any other ad, the model composited
+    those two men in. Prose carries the style now.
+    """
+    monkeypatch.setattr(refs, "SEND_STYLE_REFS", False)
+    for style in ("house_energy", "dark_cinematic", "flat_graphic",
+                  "clean_corporate"):
+        assert refs.pick_refs(style, "split_screen", people_in_ad=True) == []
+        assert refs.pick_refs(style, "split_screen", people_in_ad=False) == []
+
+
+def test_the_real_style_pack_is_never_sent_while_it_contains_people(monkeypatch):
+    """Guards the default itself: flipping SEND_STYLE_REFS on is a decision that
+    requires a people-free pack, not an accident."""
+    from src import config
+    assert config.SEND_STYLE_REFS is False, (
+        "refs/style/ still contains photographs of people; turning this on "
+        "reintroduces strangers into other ads' thumbnails"
+    )
+
+
+def test_saving_a_winner_still_works_with_references_off(isolated_refs, tmp_path,
+                                                        monkeypatch):
+    """Starring must not crash just because references are not being sent."""
+    monkeypatch.setattr(refs, "SEND_STYLE_REFS", False)
+    src_file = tmp_path / "chosen.png"
+    src_file.write_bytes(b"\x89PNG fake")
+    saved = refs.save_winner(src_file, "house_energy", "split_screen")
+    assert saved.exists()

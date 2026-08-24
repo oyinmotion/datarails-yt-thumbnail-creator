@@ -54,11 +54,18 @@ restart.
 ## How it works
 
 ffmpeg pulls scene-change frames and the audio out of the ad. A planner model
-reads them and writes five hook/layout concepts. Five concurrent `gpt-image-2`
-renders use frames from the ad itself as references — which is what keeps the
-actors looking like themselves — plus the approved thumbnails in `refs/style/`
-for the house-style slots. Every render is then read back by a vision model
-before you see it.
+reads them and writes the hook/layout concepts. Concurrent `gpt-image-2` renders
+use frames from the ad itself as references — which is what keeps the actors
+looking like themselves — and nothing else. Every render is then read back by a
+vision model before you see it.
+
+The four approved thumbnails in `refs/style/` are **not** sent to the model
+(`SEND_STYLE_REFS` in `src/config.py`, off). Every one of them is a finished
+thumbnail showing the two Claude-vs-Claude actors, and handing the model
+photographs of two specific men put those men into other ads' thumbnails. The
+house look now travels as prose in `STYLE_BRIEF`, which describes palette,
+lighting, subject treatment and type per style. Turn the switch back on only
+with reference images that contain no people.
 
 Renders are generated at 2048×1152 and downscaled to exactly 1920×1080:
 `gpt-image-2` requires both edges to be multiples of 16, and 1080 is not
@@ -205,5 +212,8 @@ change.
   server-side and are lost when the app restarts, so an occasional re-sign-in is
   expected. Removing someone from `ALLOWED_EMAILS` takes effect on their next
   page load, not when the cookie expires.
+- Style references are disabled, so the look is carried by prose rather than by
+  example images. If the house style drifts over time, that is the trade for
+  never importing a stranger's face.
 - Renders get one reroll each. A variant that fails verification twice is still
   shown, flagged, so you always receive five tiles and decide for yourself.

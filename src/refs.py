@@ -12,7 +12,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from .config import REFS_STYLE_DIR, REFS_WINNERS_DIR
+from .config import REFS_STYLE_DIR, REFS_WINNERS_DIR, SEND_STYLE_REFS
 from .models import HOUSE_STYLE
 
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -61,6 +61,13 @@ def pick_refs(
     Those styles start prompt-only and accumulate their own references as the
     team approves outputs.
     """
+    if not SEND_STYLE_REFS:
+        # Every image in refs/style/ and refs/winners/ is a finished thumbnail
+        # containing recognisable people. For any ad but the one they came from,
+        # those people are strangers, and the model copies them in. Style now
+        # travels as prose instead. See config.SEND_STYLE_REFS.
+        return []
+
     if not people_in_ad:
         # Every image in refs/style/ is a finished thumbnail, and every one
         # contains the two actors. Handing one to a motion-graphic ad is how a

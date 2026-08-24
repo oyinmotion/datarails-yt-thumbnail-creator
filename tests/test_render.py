@@ -237,3 +237,33 @@ def test_a_people_free_ad_is_told_not_to_draw_a_person(frames):
     # The prose wraps, so normalise whitespace before matching a phrase.
     flat = " ".join(prompt.split())
     assert "Never copy a person out of a reference image" in flat
+
+
+def test_only_the_ads_own_frames_are_sent_by_default(frames, monkeypatch):
+    """No style references, so nothing can carry a stranger's face in.
+
+    The autouse fake_refs fixture forces a reference in; this test removes it to
+    check the real default.
+    """
+    monkeypatch.setattr(
+        render, "pick_refs",
+        lambda style, treatment, limit=3, people_in_ad=True: [],
+    )
+    client = FakeClient()
+    render.render_variant(_variant(), frames, client=client)
+    assert len(client.images.calls[0]["image"]) == 1
+
+
+def test_every_render_is_told_not_to_copy_a_face_from_a_style_image(frames):
+    client = FakeClient()
+    render.render_variant(_variant(), frames, client=client)
+    flat = " ".join(client.images.calls[0]["prompt"].split())
+    assert "Never copy, trace or imitate a face from a style image" in flat
+
+
+def test_every_render_is_told_to_count_the_people(frames):
+    client = FakeClient()
+    render.render_variant(_variant(), frames, client=client)
+    flat = " ".join(client.images.calls[0]["prompt"].split())
+    assert "Count the people in the reference frames" in flat
+    assert "If they show nobody, the thumbnail contains nobody" in flat
