@@ -10,8 +10,11 @@ marketing team.
 2. Paste a Drive link to the ad. Any link you can open, the tool can fetch.
 3. Press **Generate 5 thumbnails**. It takes a few minutes and produces 15
    images — five concepts at three aspect ratios.
-4. Download the ones you like, or **Save to Drive** to drop the batch into a
-   dated folder beside the source ad.
+4. The results are headed with the ad's name, and split into three tabs —
+   **16:9 · YouTube**, **1:1 · Square**, **9:16 · Shorts**. Every concept exists
+   in all three; switch tabs to see and download them.
+5. Download the ones you like, or **Save to Drive** to drop the whole batch,
+   every size, into a dated folder beside the source ad.
 
 Optional, under **Advanced**:
 
@@ -187,6 +190,9 @@ change.
   and you simply sign in again.
 - `refs/winners/` is written to the app's filesystem, which is ephemeral on
   Streamlit Community Cloud. Starred references last for the session only.
+- Sign-in is remembered for a week in a signed cookie, but the Drive
+  credentials live in the app process. If Streamlit restarts or sleeps, the next
+  visit asks for one more click — the app says so rather than looking broken.
 - Sign-in is remembered for a week in a signed cookie. The credentials stay
   server-side and are lost when the app restarts, so an occasional re-sign-in is
   expected. Removing someone from `ALLOWED_EMAILS` takes effect on their next

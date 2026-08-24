@@ -102,6 +102,23 @@ def oauth_state_matches(expected: str | None, returned: str | None) -> bool:
     return bool(returned) and returned == expected
 
 
+def ad_display_name(video_name: str) -> str:
+    """A readable name for the ad, from its Drive filename.
+
+    Datarails ad files carry long encoded tails —
+    "..._vid_16x9_47s_high_bus_awa_skit_aic_hall..." — which are noise in a
+    header. Keep everything up to the first encoding marker, and tidy the
+    separators.
+    """
+    stem = Path(video_name or "").stem
+    for marker in ("_vid_", "_16x9_", "_9x16_", "_1x1_"):
+        if marker in stem:
+            stem = stem.split(marker)[0]
+            break
+    cleaned = " ".join(stem.replace("_", " ").replace("-", " ").split())
+    return cleaned or "this ad"
+
+
 def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
     """The grid belongs to the link that produced it, not whatever is typed now."""
     if not stored_link:
@@ -212,6 +229,31 @@ def _cookies():
     return stx.CookieManager(key="dr_yt_cookies")
 
 
+def remember_browser() -> None:
+    """Write the session cookie once we are safely past any rerun.
+
+    Called from main(), not from the sign-in branch: a cookie written
+    immediately before st.rerun() never survives the round trip.
+    """
+    if not st.session_state.pop("needs_cookie", False):
+        return
+    email = st.session_state.get("email", "")
+    if not email:
+        return
+    try:
+        _cookies().set(
+            dr_session.COOKIE_NAME,
+            dr_session.mint_token(email, _signing_secret()),
+            expires_at=datetime.now() + timedelta(
+                seconds=dr_session.DEFAULT_TTL_SECONDS
+            ),
+            key="set_session_cookie",
+        )
+    except Exception:
+        # Losing persistence is a nuisance, not a reason to fail the page.
+        log.warning("could not write the session cookie", exc_info=True)
+
+
 def require_sign_in():
     if "credentials" in st.session_state:
         return st.session_state["credentials"]
@@ -225,6 +267,11 @@ def require_sign_in():
             st.session_state["credentials"] = credentials
             st.session_state["email"] = remembered
             return credentials
+        if dr_session_still_allowed(remembered):
+            # The cookie is good but the server forgot the Drive credentials —
+            # the app restarted or went to sleep. Say so, because "sign in
+            # again" with no explanation reads as a bug.
+            st.session_state["session_expired_for"] = remembered
 
     code = st.query_params.get("code")
     if code:
@@ -257,16 +304,13 @@ def require_sign_in():
             st.stop()
         st.session_state["credentials"] = credentials
         st.session_state["email"] = email
-        # Remember this browser so the next visit skips Google entirely.
         _live_sessions()[email.strip().lower()] = credentials
-        cookies.set(
-            dr_session.COOKIE_NAME,
-            dr_session.mint_token(email, _signing_secret()),
-            expires_at=datetime.now() + timedelta(
-                seconds=dr_session.DEFAULT_TTL_SECONDS
-            ),
-            key="set_session_cookie",
-        )
+        # The cookie is NOT written here. CookieManager persists it through a
+        # frontend round trip, and the st.rerun() below aborts that round trip,
+        # so the cookie silently never lands — which is why people were being
+        # signed out mid-batch. remember_browser() writes it from main(), where
+        # no rerun follows.
+        st.session_state["needs_cookie"] = True
         st.query_params.clear()
         st.rerun()
 
@@ -283,7 +327,12 @@ def require_sign_in():
     st.session_state["oauth_state"] = state
     _apply_brand()
     st.title("YT Thumbnail Creator")
-    st.write("Five thumbnail concepts from one Drive link, in three ratios.")
+    st.write("Five thumbnail concepts from one Drive link, in three sizes.")
+    if st.session_state.get("session_expired_for"):
+        st.info(
+            "The app restarted, so it needs you to sign in once more. "
+            "One click — Google already knows you."
+        )
     st.link_button("Sign in with your Datarails Google account", url,
                    type="primary")
     st.stop()
@@ -302,6 +351,7 @@ def main() -> None:
     # the check is the documented way to accept Google's own expansion.
     os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
     credentials = require_sign_in()
+    remember_browser()
 
     _apply_brand()
     st.title("YT Thumbnail Creator")
@@ -347,11 +397,20 @@ def main() -> None:
             status.update(label="Fetching the ad from Drive…")
             video, parent_id = drive.fetch_video(file_id, credentials, work_dir)
 
+            # Name the ad in the progress label as soon as we know it: a batch
+            # runs for minutes and this is the window where you forget which
+            # one you started.
+            ad_name = ad_display_name(video.name)
+            st.session_state["video_name"] = video.name
+            status.update(label=f"Working on “{ad_name}” — reading the ad…")
+
             outcome = generate_batch(
                 video, work_dir,
                 headline_override=headline_override or None,
                 context=context or None,
-                progress=lambda message: status.update(label=message),
+                progress=lambda message: status.update(
+                    label=f"“{ad_name}” — {message}"
+                ),
             )
             status.update(label="Done.", state="complete")
 
@@ -385,37 +444,65 @@ def main() -> None:
 
     outcome = st.session_state.get("outcome")
     if outcome and should_show_outcome(st.session_state.get("outcome_link"), link):
+        # A batch takes minutes, so by the time it lands you have forgotten
+        # which ad you asked for. Name it.
+        st.subheader(f"Thumbnails for {ad_display_name(st.session_state.get('video_name', ''))}")
         for warning in outcome.warnings:
             st.warning(warning)
         st.caption(f"**What the ad is about:** {outcome.plan.ad_summary}")
+        st.caption(
+            "Every concept is rendered in **three sizes** — switch tabs to see "
+            "the square and vertical versions."
+        )
 
-        columns = st.columns(3)
-        for position, result in enumerate(outcome.results):
-            with columns[position % 3]:
-                label = f"{result.variant.hook_type} · {result.variant.treatment}"
-                if result.path is None:
-                    st.error(f"**{label}** — couldn't render. {result.note}")
-                    continue
-                st.image(str(result.path), caption=label)
-                if result.flagged:
-                    st.warning(f"⚠️ {result.note}")
-                st.download_button(
-                    "Download", result.path.read_bytes(),
-                    file_name=result.path.name,
-                    mime="image/png" if result.path.suffix == ".png" else "image/jpeg",
-                    key=f"dl_{result.variant.index}",
-                )
-                if st.button("⭐ Save as reference",
-                             key=f"ref_{result.variant.index}"):
-                    refs.save_winner(
-                        result.path,
-                        result.variant.style,
-                        result.variant.treatment,
-                    )
-                    # Deliberately says nothing about the filesystem: how long
-                    # it lasts is a maintenance detail, and the caveat lives in
-                    # the README where whoever maintains this will read it.
-                    st.success("Saved — this look will guide future batches.")
+        ratio_tabs = {
+            "16x9": "16:9 · YouTube",
+            "1x1": "1:1 · Square",
+            "9x16": "9:16 · Shorts",
+        }
+        for tab, (ratio, tab_label) in zip(
+            st.tabs(list(ratio_tabs.values())), ratio_tabs.items()
+        ):
+            with tab:
+                columns = st.columns(3)
+                for position, result in enumerate(outcome.results):
+                    with columns[position % 3]:
+                        label = (
+                            f"{result.variant.hook_type} · "
+                            f"{result.variant.treatment}"
+                        )
+                        path = result.paths.get(ratio)
+                        if path is None:
+                            st.error(
+                                f"**{label}** — no {tab_label.split(' · ')[0]} "
+                                f"version. {result.note}"
+                            )
+                            continue
+                        st.image(str(path), caption=label)
+                        if result.flagged:
+                            st.warning(f"⚠️ {result.note}")
+                        st.download_button(
+                            "Download", path.read_bytes(),
+                            file_name=path.name,
+                            mime=("image/png" if path.suffix == ".png"
+                                  else "image/jpeg"),
+                            key=f"dl_{result.variant.index}_{ratio}",
+                        )
+                        if st.button(
+                            "⭐ Save as reference",
+                            key=f"ref_{result.variant.index}_{ratio}",
+                        ):
+                            refs.save_winner(
+                                path,
+                                result.variant.style,
+                                result.variant.treatment,
+                            )
+                            # Deliberately says nothing about the filesystem:
+                            # how long it lasts is a maintenance detail, and the
+                            # caveat lives in the README.
+                            st.success(
+                                "Saved — this look will guide future batches."
+                            )
 
         successful = [r for r in outcome.results if r.path]
         if successful:

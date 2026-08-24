@@ -122,3 +122,36 @@ def test_a_returning_user_still_has_to_be_on_the_domain(monkeypatch):
     monkeypatch.setattr(app, "_allowlist", lambda: set())
     assert app.dr_session_still_allowed("anyone@datarails.com")
     assert not app.dr_session_still_allowed("outsider@gmail.com")
+
+
+# --- naming the ad --------------------------------------------------------
+
+
+def test_the_encoded_tail_is_stripped_from_the_ad_name():
+    """Real filenames carry a long encoded tail that is noise in a header."""
+    assert app.ad_display_name(
+        "claude-vs-claude-with-fos-v2_vid_16x9_47s_high_bus_awa_skit.mp4"
+    ) == "claude vs claude with fos v2"
+
+
+def test_a_plain_filename_survives_intact():
+    assert app.ad_display_name("My Cool Ad.mp4") == "My Cool Ad"
+
+
+def test_separators_are_tidied():
+    assert app.ad_display_name("motion_graphic-promo.mp4") == "motion graphic promo"
+
+
+def test_a_ratio_marker_also_ends_the_name():
+    assert app.ad_display_name("promo_9x16_30s.mp4") == "promo"
+
+
+def test_a_missing_name_still_reads_as_a_sentence():
+    for empty in ("", None):
+        assert app.ad_display_name(empty) == "this ad"
+
+
+def test_the_name_never_comes_back_blank():
+    """A header that says "Thumbnails for" and nothing else looks broken."""
+    for odd in ("_vid_only.mp4", "___.mp4", ".mp4"):
+        assert app.ad_display_name(odd).strip()
