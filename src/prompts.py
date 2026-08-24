@@ -5,7 +5,14 @@ from __future__ import annotations
 from functools import lru_cache
 
 from .config import PROMPTS_DIR
-from .models import STYLE_BRIEF, TREATMENT_BRIEF, Variant
+from .models import (
+    DEFAULT_VARIANTS,
+    ROW_INTENT,
+    STYLE_BRIEF,
+    TREATMENT_BRIEF,
+    Variant,
+    matrix_for,
+)
 
 
 @lru_cache(maxsize=None)
@@ -45,12 +52,44 @@ def render_prompt(variant: Variant, people_in_ad: bool = True) -> str:
     return filled
 
 
+NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
+
+
+def matrix_instruction(count: int) -> str:
+    """The pairing table, for exactly the rows this batch asked for."""
+    rows = matrix_for(count)
+    word = NUMBER_WORDS.get(count, str(count))
+    thing = "variant" if count == 1 else "variants"
+    lines = [
+        f"You must return exactly {word} {thing}, one per row, using these "
+        "exact pairings:",
+        "",
+        "| index | hook_type | treatment | what it is |",
+        "|---|---|---|---|",
+    ]
+    for index, hook, treatment, _style in rows:
+        lines.append(
+            f"| {index} | {hook} | {treatment} | {ROW_INTENT.get(index, '')} |"
+        )
+    if count < DEFAULT_VARIANTS:
+        lines += [
+            "",
+            f"Only these {word} rows. Do not add the others — this batch was "
+            "deliberately asked for fewer, and the rows are ordered so the "
+            "strongest, safest concepts come first.",
+        ]
+    return "\n".join(lines)
+
+
 def planner_prompt(
     transcript: str | None,
     context: str | None,
     headline_override: str | None,
+    variant_count: int = DEFAULT_VARIANTS,
 ) -> str:
-    parts = [load("planner")]
+    parts = [load("planner").replace(
+        "{matrix_instruction}", matrix_instruction(variant_count)
+    )]
 
     if transcript:
         parts.append(f"\n## What is said in the ad\n\n{transcript.strip()}")

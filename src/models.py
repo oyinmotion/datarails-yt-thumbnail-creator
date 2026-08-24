@@ -116,6 +116,36 @@ STYLE_BRIEF: dict[str, str] = {
 
 MAX_HEADLINE_WORDS = 5
 
+# How many concepts a batch may ask for. The ceiling is the matrix itself: every
+# row is a distinct hook/treatment/style pairing, and asking for more would mean
+# repeating a pairing, which produces two near-identical concepts.
+MIN_VARIANTS = 1
+MAX_VARIANTS = len(MATRIX)
+DEFAULT_VARIANTS = len(MATRIX)
+
+# What each row is for, in the planner's words. Kept beside the matrix so the
+# two cannot drift apart.
+ROW_INTENT: dict[int, str] = {
+    1: "a number or hard comparison, both actors facing off",
+    2: "a question one actor's face is already asking",
+    3: "the disagreement at the heart of the ad",
+    4: "the frustration the viewer recognizes in themselves",
+    5: "the payoff, with the product visible",
+}
+
+
+def matrix_for(count: int) -> list[tuple[int, HookType, Treatment, Style]]:
+    """The first `count` rows. Order matters: row 1 is the safest concept.
+
+    Slicing rather than sampling means asking for two concepts always gives the
+    same two, so a small batch is reproducible and comparable across ads.
+    """
+    if not MIN_VARIANTS <= count <= MAX_VARIANTS:
+        raise ValueError(
+            f"count must be between {MIN_VARIANTS} and {MAX_VARIANTS}, got {count}"
+        )
+    return MATRIX[:count]
+
 
 def style_for(index: int) -> Style:
     """The style locked to a slot. Derived, never model-chosen."""
@@ -170,20 +200,21 @@ class BatchPlan(BaseModel):
     people_in_ad: bool = True
     variants: list[Variant]
 
-    def validate_matrix(self) -> None:
+    def validate_matrix(self, rows: list | None = None) -> None:
         """Fail loudly if the model drifted off the locked pairing.
 
         This is the *only* guard on variant count and index range — see the
         comment on Variant.index for why they cannot be schema constraints.
         """
-        if len(self.variants) != len(MATRIX):
+        rows = MATRIX if rows is None else rows
+        if len(self.variants) != len(rows):
             raise ValueError(
                 f"plan does not follow the locked matrix: expected exactly "
-                f"{len(MATRIX)} variants, got {len(self.variants)}"
+                f"{len(rows)} variants, got {len(self.variants)}"
             )
 
         indexes = sorted(v.index for v in self.variants)
-        expected_indexes = sorted(row[0] for row in MATRIX)
+        expected_indexes = sorted(row[0] for row in rows)
         if indexes != expected_indexes:
             raise ValueError(
                 f"plan does not follow the locked matrix: indexes must be "
@@ -193,7 +224,7 @@ class BatchPlan(BaseModel):
         # Compare only the planner-facing columns. Style is derived from the
         # slot, so the model is never asked for it and cannot violate it.
         actual = [(v.index, v.hook_type, v.treatment) for v in self.variants]
-        expected = [(row[0], row[1], row[2]) for row in MATRIX]
+        expected = [(row[0], row[1], row[2]) for row in rows]
         if sorted(actual) != sorted(expected):
             raise ValueError(
                 f"plan does not follow the locked matrix.\n"

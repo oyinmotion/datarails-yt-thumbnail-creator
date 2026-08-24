@@ -189,3 +189,48 @@ def test_the_divergent_briefs_forbid_the_house_treatment():
     for style in ("dark_cinematic", "flat_graphic", "clean_corporate"):
         brief = STYLE_BRIEF[style].lower()
         assert "no sparks" in brief or "no glow" in brief or "no drama" in brief
+
+
+# --- choosing how many concepts -------------------------------------------
+
+
+def test_matrix_for_takes_the_first_rows_in_order():
+    """Row order is a ranking: asking for two must give the two strongest."""
+    from src.models import matrix_for
+    assert matrix_for(2) == MATRIX[:2]
+    assert matrix_for(5) == MATRIX
+
+
+def test_matrix_for_rejects_out_of_range_counts():
+    from src.models import MAX_VARIANTS, matrix_for
+    for bad in (0, -1, MAX_VARIANTS + 1, 99):
+        with pytest.raises(ValueError, match="between"):
+            matrix_for(bad)
+
+
+def test_the_ceiling_is_the_matrix_itself():
+    """More concepts would mean repeating a pairing, i.e. duplicate concepts."""
+    from src.models import MAX_VARIANTS
+    assert MAX_VARIANTS == len(MATRIX)
+
+
+def test_a_short_plan_validates_against_the_rows_it_asked_for():
+    from src.models import matrix_for
+    rows = matrix_for(2)
+    plan = _plan(variants=[_variant(i, h, t) for i, h, t, _s in rows])
+    plan.validate_matrix(rows)
+
+
+def test_a_short_plan_is_rejected_against_the_full_matrix():
+    """The guard still bites: two variants is wrong when five were asked for."""
+    from src.models import matrix_for
+    plan = _plan(variants=[_variant(i, h, t) for i, h, t, _s in matrix_for(2)])
+    with pytest.raises(ValueError, match="expected exactly 5"):
+        plan.validate_matrix()
+
+
+def test_a_full_plan_is_rejected_when_only_two_were_asked_for():
+    from src.models import matrix_for
+    plan = _plan()
+    with pytest.raises(ValueError, match="expected exactly 2"):
+        plan.validate_matrix(matrix_for(2))

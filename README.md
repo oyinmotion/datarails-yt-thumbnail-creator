@@ -8,12 +8,14 @@ marketing team.
 
 1. Open the app URL and sign in with your **@datarails.com** Google account.
 2. Paste a Drive link to the ad. Any link you can open, the tool can fetch.
-3. Press **Generate 5 thumbnails**. It takes a few minutes and produces 15
-   images — five concepts at three aspect ratios.
-4. The results are headed with the ad's name, and split into three tabs —
+3. Choose **how many concepts** you want — anywhere from 1 to 5, five by
+   default. The caption under the slider tells you how many images that is and
+   roughly what it costs before you commit.
+4. Press **Generate**. It takes a few minutes.
+5. The results are headed with the ad's name, and split into three tabs —
    **16:9 · YouTube**, **1:1 · Square**, **9:16 · Shorts**. Every concept exists
    in all three; switch tabs to see and download them.
-5. Download the ones you like, or **Save to Drive** to drop the whole batch,
+6. Download the ones you like, or **Save to Drive** to drop the whole batch,
    every size, into a dated folder beside the source ad.
 
 Optional, under **Advanced**:
@@ -24,8 +26,9 @@ Optional, under **Advanced**:
 
 ### What you get
 
-Five variants, deliberately different. The pairings are fixed so every batch
-spans the space instead of clustering on one idea:
+Up to five variants, deliberately different. The pairings are fixed so every
+batch spans the space instead of clustering on one idea, and the rows are
+ordered — asking for two gives you the top two, not a random two:
 
 | # | Hook | Layout | Look |
 |---|------|--------|------|
@@ -77,7 +80,12 @@ thumbnails are built with no person at all and the house-style references are
 withheld, because those references are finished thumbnails of a different ad and
 the model will otherwise lift an actor out of them.
 
-Roughly $3 per batch: fifteen renders.
+Roughly $0.60 per concept — three renders each — so about $3 for a full batch
+of five, or $1.20 for two.
+
+Five is the ceiling because every row is a distinct hook, layout and look;
+a sixth would have to repeat a pairing and would give you two near-identical
+concepts. Raising it means adding rows to `MATRIX` in `src/models.py`.
 
 ## Running it locally
 

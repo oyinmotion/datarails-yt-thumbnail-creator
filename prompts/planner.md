@@ -17,17 +17,9 @@ viewer evaluates before deciding to click. The headline is the whole game.
   concept as a comparison without a figure.
 - Plain finance language a CFO would use. No jargon, no exclamation marks.
 
-## The five concepts
+## The concepts
 
-You must return exactly five variants, one per row, using these exact pairings:
-
-| index | hook_type | treatment | what it is |
-|---|---|---|---|
-| 1 | stat | split_screen | a number or hard comparison, both actors facing off |
-| 2 | question | face_closeup | a question one actor's face is already asking |
-| 3 | conflict | full_bleed | the disagreement at the heart of the ad |
-| 4 | pain | text_dominant | the frustration the viewer recognizes in themselves |
-| 5 | outcome | product_forward | the payoff, with the product visible |
+{matrix_instruction}
 
 For each variant:
 

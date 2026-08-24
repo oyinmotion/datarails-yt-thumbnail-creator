@@ -136,3 +136,34 @@ def test_the_planner_prompt_never_mentions_style():
                                   headline_override=None).lower()
     for style in ("dark_cinematic", "flat_graphic", "clean_corporate"):
         assert style not in text
+
+
+def test_the_planner_is_told_exactly_how_many_concepts_to_return():
+    for count, word in ((1, "one"), (2, "two"), (5, "five")):
+        text = prompts.planner_prompt("t", None, None, variant_count=count)
+        assert f"exactly {word} variant" in text
+
+
+def test_a_short_batch_lists_only_its_own_rows():
+    text = prompts.planner_prompt("t", None, None, variant_count=2)
+    assert "| 1 | stat |" in text and "| 2 | question |" in text
+    assert "| 3 | conflict |" not in text
+    assert "| 5 | outcome |" not in text
+
+
+def test_a_short_batch_is_told_not_to_add_the_others():
+    text = prompts.planner_prompt("t", None, None, variant_count=3)
+    assert "Do not add the others" in text
+
+
+def test_a_full_batch_gets_no_such_warning():
+    text = prompts.planner_prompt("t", None, None, variant_count=5)
+    assert "Do not add the others" not in text
+    for row in MATRIX:
+        assert f"| {row[0]} | {row[1]} |" in text
+
+
+def test_one_concept_reads_as_singular():
+    assert "exactly one variant," in prompts.planner_prompt(
+        "t", None, None, variant_count=1
+    )

@@ -17,7 +17,7 @@ from . import backoff
 from . import plan as plan_module
 from . import branding, postprocess, probe, qa, render
 from .config import PRIMARY_RATIO, RATIOS
-from .models import BatchPlan, Variant
+from .models import DEFAULT_VARIANTS, BatchPlan, Variant
 
 log = logging.getLogger(__name__)
 
@@ -221,6 +221,7 @@ def generate_batch(
     context: str | None = None,
     client=None,
     progress: Callable[[str], None] | None = None,
+    variant_count: int = DEFAULT_VARIANTS,
     sleeper=None,
 ) -> BatchOutcome:
     def say(message: str) -> None:
@@ -248,7 +249,7 @@ def generate_batch(
     say("Reading the ad and planning five hooks…")
     batch_plan = plan_module.build_plan(
         frame_paths, audio, headline_override, context, client=client,
-        sleeper=sleeper,
+        sleeper=sleeper, variant_count=variant_count,
     )
     if not batch_plan.transcript_used and not warnings:
         warnings.append("No transcript was available; hooks come from the "

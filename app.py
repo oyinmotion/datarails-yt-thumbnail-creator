@@ -15,6 +15,7 @@ import extra_streamlit_components as stx
 import streamlit as st
 
 from src import auth, drive, refs, session as dr_session
+from src.models import DEFAULT_VARIANTS, MAX_VARIANTS, MIN_VARIANTS
 from src.pipeline import ThumbResult, generate_batch
 
 log = logging.getLogger(__name__)
@@ -362,6 +363,19 @@ def main() -> None:
         placeholder="https://drive.google.com/file/d/…/view",
     )
 
+    variant_count = st.slider(
+        "How many concepts?",
+        min_value=MIN_VARIANTS, max_value=MAX_VARIANTS, value=DEFAULT_VARIANTS,
+        help="Each concept is a different hook and a different look, and is "
+             "rendered in all three sizes. Fewer concepts means a shorter wait "
+             "and a smaller bill.",
+    )
+    st.caption(
+        f"{variant_count} concept{'s' if variant_count != 1 else ''} × 3 sizes = "
+        f"**{variant_count * 3} images**, roughly "
+        f"**${variant_count * 3 * 0.2:.2f}**"
+    )
+
     with st.expander("Advanced"):
         headline_override = st.text_input(
             "Headline override",
@@ -374,7 +388,11 @@ def main() -> None:
             height=90,
         )
 
-    if st.button("Generate 5 thumbnails", type="primary", disabled=not link):
+    button_label = (
+        "Generate 1 thumbnail" if variant_count == 1
+        else f"Generate {variant_count} thumbnails"
+    )
+    if st.button(button_label, type="primary", disabled=not link):
         # A fresh attempt invalidates whatever the previous attempt left
         # behind — both the stale grid and the disk space it was using.
         previous_work_dir = st.session_state.pop("work_dir", None)
@@ -408,6 +426,7 @@ def main() -> None:
                 video, work_dir,
                 headline_override=headline_override or None,
                 context=context or None,
+                variant_count=variant_count,
                 progress=lambda message: status.update(
                     label=f"“{ad_name}” — {message}"
                 ),

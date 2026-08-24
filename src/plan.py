@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from . import backoff
 from .config import PLANNER_MODEL, TRANSCRIBE_MODEL
-from .models import MAX_HEADLINE_WORDS, BatchPlan
+from .models import DEFAULT_VARIANTS, MAX_HEADLINE_WORDS, BatchPlan, matrix_for
 from .openai_client import get_client
 from .prompts import planner_prompt
 
@@ -69,6 +69,7 @@ def build_plan(
     headline_override: str | None = None,
     context: str | None = None,
     client=None,
+    variant_count: int = DEFAULT_VARIANTS,
     sleeper=None,
 ) -> BatchPlan:
     if not frames:
@@ -79,7 +80,8 @@ def build_plan(
     active = _client(client)
     transcript = transcribe(audio, client=active) if audio else None
 
-    instructions = planner_prompt(transcript, context, headline_override)
+    instructions = planner_prompt(transcript, context, headline_override,
+                                  variant_count=variant_count)
     frame_list = "\n".join(f"- {f.name}" for f in frames)
     instructions += (
         "\n## Available frames\n\nUse one of these exact filenames for "
@@ -105,7 +107,7 @@ def build_plan(
                 text_format=BatchPlan,
             )
             result: BatchPlan = response.output_parsed
-            result.validate_matrix()
+            result.validate_matrix(matrix_for(variant_count))
             result.transcript_used = transcript is not None
             return result
         except ValidationError as exc:

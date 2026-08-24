@@ -413,3 +413,61 @@ def test_the_likeness_gate_receives_the_frame_the_render_used(
         "without a reference frame the likeness gate silently does nothing"
     )
     assert all(f.name.startswith("scene_") for f in seen)
+
+
+def _plan_of(count):
+    from src.models import matrix_for
+    return BatchPlan(
+        ad_summary="same AI, different answers",
+        transcript_used=True,
+        variants=[
+            Variant(
+                index=i, hook_type=h, treatment=t, headline=f"HOOK {i}",
+                frame_id="scene_001.jpg", second_frame_id=None,
+                scene_direction="sparks", rationale="from the ad",
+            )
+            for i, h, t, _s in matrix_for(count)
+        ],
+    )
+
+
+def test_asking_for_two_concepts_renders_two_rows_and_six_images(
+    wired, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(2))
+    calls = {"n": 0}
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return b"\x89PNG bytes"
+
+    monkeypatch.setattr(render, "render_variant", counting)
+    outcome = pipeline.generate_batch(
+        tmp_path / "ad.mp4", tmp_path / "work", variant_count=2,
+    )
+    assert len(outcome.results) == 2
+    assert calls["n"] == 6, "two concepts at three ratios"
+    assert all(len(r.paths) == 3 for r in outcome.results)
+
+
+def test_the_requested_count_reaches_the_planner(wired, tmp_path, monkeypatch):
+    seen = {}
+
+    def capturing_plan(*args, **kwargs):
+        seen["count"] = kwargs.get("variant_count")
+        return _plan_of(kwargs.get("variant_count", 5))
+
+    monkeypatch.setattr(plan_module, "build_plan", capturing_plan)
+    pipeline.generate_batch(
+        tmp_path / "ad.mp4", tmp_path / "work", variant_count=3,
+    )
+    assert seen["count"] == 3
+
+
+def test_one_concept_still_produces_a_row(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(1))
+    outcome = pipeline.generate_batch(
+        tmp_path / "ad.mp4", tmp_path / "work", variant_count=1,
+    )
+    assert len(outcome.results) == 1
+    assert outcome.results[0].path is not None
