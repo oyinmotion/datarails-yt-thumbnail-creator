@@ -198,6 +198,22 @@ No Python required for any of this:
 Model IDs live in one place, `src/config.py`, so a model refresh is a one-line
 change.
 
+## Keeping it awake
+
+Streamlit Community Cloud puts an app to sleep after roughly a week without
+traffic, and whoever opens it next gets a "wake this app up" screen followed by
+a cold start. `.github/workflows/keep-awake.yml` visits the URL every six hours
+to stop the timer ever reaching that point.
+
+Two things to know about it. GitHub disables scheduled workflows in a repository
+with no commits for 60 days, so if this project goes quiet the pings stop too —
+the Actions tab will say so, and re-enabling is one click. And the ping is a
+reachability check, not proof the app is awake: a sleeping app still answers, so
+the workflow passing means the URL responded, nothing more.
+
+If it ever needs to move off GitHub, any uptime monitor pointed at the URL on a
+6-hourly schedule does the same job.
+
 ## Known limits
 
 - Sign-in state is held in the app process, not a cookie, so if the app restarts

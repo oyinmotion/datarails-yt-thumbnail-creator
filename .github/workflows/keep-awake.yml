@@ -1,0 +1,34 @@
+name: Keep the app awake
+
+# Streamlit Community Cloud puts an app to sleep after roughly a week without
+# traffic, and the next person to open it gets a "wake this app up" screen and a
+# cold start. This visits the app often enough that it never gets there.
+on:
+  schedule:
+    # Every 6 hours. Far more often than needed for a ~7 day timer, but cheap,
+    # and it means a single missed run never matters.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:        # so it can be run by hand from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Visit the app
+        run: |
+          URL="https://dt-yt-thumbnail-creator.streamlit.app"
+          echo "Visiting $URL"
+          # Deliberately NOT -L. The app answers 303 and redirects in a loop,
+          # so following redirects exits 47 ("maximum redirects followed") and
+          # the job fails every run. Any response at all proves it is reachable,
+          # which is what keeps the sleep timer from advancing.
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+                      --max-time 120 --retry 3 --retry-delay 20 \
+                      --retry-all-errors "$URL")
+          echo "HTTP $CODE"
+          # 2xx and 3xx both mean the server answered. Only a 5xx or a total
+          # failure is worth alerting on.
+          if [ -z "$CODE" ] || [ "$CODE" -ge 500 ] || [ "$CODE" -eq 000 ]; then
+            echo "::error::App unreachable (HTTP $CODE)"
+            exit 1
+          fi
