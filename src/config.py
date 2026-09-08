@@ -98,6 +98,27 @@ LOGO_PLATE_DARK = (12, 20, 43)       # --dr-navy  #0C142B
 LOGO_PLATE_LIGHT = (255, 248, 238)   # --dr-cream #FFF8EE
 LOGO_PLATE_ALPHA = 255               # fully opaque: "solid colour" means solid
 
+# --- Typesetting -----------------------------------------------------------
+# The headline is set by us, not by the image model. Poppins is the design
+# system's face and is OFL-licensed, so the whole family can ship in the repo.
+FONTS_DIR = PROJECT_ROOT / "assets" / "fonts" / "poppins"
+HEADLINE_FONT = FONTS_DIR / "Poppins-Black.ttf"
+HEADLINE_FALLBACK_FONT = FONTS_DIR / "Poppins-SemiBold.ttf"
+# Cap height never below this fraction of canvas height: at the 320px width a
+# thumbnail actually occupies in a feed, that is still >= 14px of type.
+TEXT_FLOOR_FRACTION = 0.07
+# Text zones never enter this bottom band; it is where stamp_logo prefers to sit.
+TEXT_BOTTOM_RESERVE = 0.14
+# Text is drawn at this multiple of the art's size and composited down, so the
+# edges are anti-aliased rather than stepped.
+TEXT_SUPERSAMPLE = 2
+# branding.busy_score above this means the model painted into the reserved zone.
+ZONE_BUSY_THRESHOLD = 22.0
+# Brand colours used by the type treatments (same values as the logo plates).
+NAVY = LOGO_PLATE_DARK
+CREAM = LOGO_PLATE_LIGHT
+WHITE = (255, 255, 255)
+
 # --- Output ratios ---------------------------------------------------------
 # (generation size, final size). Generation edges must be multiples of 16 for
 # gpt-image-2; the final sizes are the platform-native ones.

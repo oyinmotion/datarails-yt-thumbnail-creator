@@ -29,3 +29,22 @@ def test_max_bytes_is_youtube_thumbnail_cap():
 def test_drive_scope_allows_creating_folders_beside_the_source_ad():
     """drive.file cannot create a subfolder in a folder the app did not create."""
     assert "https://www.googleapis.com/auth/drive" in config.GOOGLE_SCOPES
+
+
+def test_the_headline_font_ships_in_the_repo_and_opens():
+    from PIL import ImageFont
+    from src import config
+    assert config.HEADLINE_FONT.exists(), config.HEADLINE_FONT
+    assert config.HEADLINE_FALLBACK_FONT.exists()
+    assert (config.FONTS_DIR / "OFL.txt").exists(), "the licence travels with the font"
+    font = ImageFont.truetype(str(config.HEADLINE_FONT), 100)
+    assert font.getlength("SAME AI") > 0
+
+
+def test_typesetting_constants_match_the_spec():
+    from src import config
+    assert config.TEXT_FLOOR_FRACTION == 0.07
+    assert config.TEXT_BOTTOM_RESERVE == 0.14
+    assert config.TEXT_SUPERSAMPLE == 2
+    assert config.NAVY == (12, 20, 43)
+    assert config.CREAM == (255, 248, 238)
