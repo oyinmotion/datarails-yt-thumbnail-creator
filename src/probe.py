@@ -1,8 +1,9 @@
-"""ffmpeg wrappers. No network, no AI, no Streamlit."""
+"""ffmpeg wrappers. No network, no AI, no Streamlit. ffmpeg only — no ffprobe."""
 
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,32 +14,35 @@ log = logging.getLogger(__name__)
 
 
 class ProbeError(RuntimeError):
-    """Raised when ffmpeg/ffprobe cannot read the video."""
+    """Raised when ffmpeg cannot read the video."""
 
 
 def _binary(name: str) -> str:
-    path = shutil.which(name)
-    if not path:
-        # Nothing on PATH. Streamlit Cloud used to get ffmpeg from packages.txt
-        # via apt, until the platform image's Debian 11 security source expired
-        # at the end of LTS (Aug 2026) and every apt install started failing
-        # before the app could boot. static-ffmpeg ships ffmpeg and ffprobe
-        # through pip instead: add_paths() downloads the pair once per
-        # container (~5s) and puts them on PATH. A system install still wins,
-        # so `brew install ffmpeg` keeps working locally.
-        try:
-            import static_ffmpeg
+    """The ffmpeg executable: a system install first, else the wheel-bundled one.
 
-            static_ffmpeg.add_paths()
-        except Exception as exc:  # missing package, no network, bad platform
-            log.warning("static-ffmpeg fallback failed: %s", exc)
-        path = shutil.which(name)
-    if not path:
-        raise ProbeError(
-            f"{name} is not installed. It comes from the static-ffmpeg package "
-            "in requirements.txt; locally, `brew install ffmpeg` also works."
-        )
-    return path
+    Streamlit Cloud cannot apt-install ffmpeg (its image carries an expired
+    Debian 11 source) and could not reliably download one at runtime either:
+    static-ffmpeg wrote into site-packages and needed github.com, and it failed
+    in production. imageio-ffmpeg ships the binary INSIDE its wheel, so the
+    fallback is a file that is already on disk — no download, no write, no
+    network. A system install still wins, so `brew install ffmpeg` keeps
+    working locally. Only ffmpeg is needed: durations are read from
+    `ffmpeg -i`, so ffprobe is never asked for.
+    """
+    path = shutil.which(name)
+    if path:
+        return path
+    if name == "ffmpeg":
+        try:
+            import imageio_ffmpeg
+
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception as exc:  # package missing, or no binary for this platform
+            log.warning("bundled ffmpeg unavailable: %s", exc)
+    raise ProbeError(
+        f"{name} is not installed. It ships inside the imageio-ffmpeg package in "
+        "requirements.txt; locally, `brew install ffmpeg` also works."
+    )
 
 
 def _run(cmd: list[str], doing: str) -> str:
@@ -51,22 +55,32 @@ def _run(cmd: list[str], doing: str) -> str:
     return result.stdout
 
 
+_DURATION = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def _parse_duration(ffmpeg_stderr: str) -> float:
+    """Seconds, from the `Duration: HH:MM:SS.xx` line `ffmpeg -i` prints."""
+    match = _DURATION.search(ffmpeg_stderr or "")
+    if not match:
+        raise ProbeError("That file doesn't look like a video.")
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
 def video_duration(video: Path) -> float:
+    """Read the duration with ffmpeg alone. No ffprobe anywhere in this tool.
+
+    `ffmpeg -i` with no output exits non-zero by design ("At least one output
+    file must be specified") after printing the stream info to stderr, so this
+    deliberately does not go through _run().
+    """
     if not Path(video).exists():
         raise ProbeError("That video file doesn't exist.")
-    out = _run(
-        [
-            _binary("ffprobe"), "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(video),
-        ],
-        doing="reading the video's duration",
+    result = subprocess.run(
+        [_binary("ffmpeg"), "-hide_banner", "-i", str(video)],
+        capture_output=True, text=True,
     )
-    try:
-        return float(out.strip())
-    except ValueError as exc:
-        raise ProbeError("That file doesn't look like a video.") from exc
+    return _parse_duration(result.stderr)
 
 
 def _interval_timestamps(duration: float, count: int) -> list[float]:

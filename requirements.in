@@ -11,5 +11,9 @@ oauthlib>=3.3
 requests>=2.34
 pytest>=8.0
 extra-streamlit-components
-# ffmpeg + ffprobe via pip: Streamlit Cloud's image can no longer apt-install them.
-static-ffmpeg>=3.0
+# ffmpeg via pip, BUNDLED IN THE WHEEL. Streamlit Cloud cannot apt-install it (expired
+# Debian 11 source in its image) and could not download one at runtime either
+# (static-ffmpeg wrote into site-packages and needed github.com; it failed live).
+# imageio-ffmpeg carries the binary inside the wheel: no download, no write, no network.
+# It ships no ffprobe; durations come from `ffmpeg -i`.
+imageio-ffmpeg>=0.6

@@ -85,43 +85,73 @@ def test_extract_frames_interval_fallback_with_real_ffmpeg(tmp_path, monkeypatch
 
 
 # --- binary lookup -----------------------------------------------------------
-# Streamlit Cloud can no longer apt-install ffmpeg (its image carries an expired
-# Debian 11 security source), so the binaries come from the static-ffmpeg pip
-# package when nothing is on PATH. These tests never touch the network: the
-# module is faked in sys.modules and shutil.which is stubbed.
+# Streamlit Cloud can neither apt-install ffmpeg (expired Debian 11 source in its
+# image) nor reliably download one at runtime (static-ffmpeg wrote into
+# site-packages and needed github.com; it failed in production). imageio-ffmpeg
+# ships the binary INSIDE its wheel, so the fallback is a file that is already
+# there. These tests never touch the network: the module is faked in sys.modules
+# and shutil.which is stubbed.
 
-def _fake_static_ffmpeg(monkeypatch, on_path_after: dict[str, str]):
+def _fake_imageio_ffmpeg(monkeypatch, exe: str | None, on_path: dict[str, str] | None = None):
     import sys, types
     calls = []
-    found: dict[str, str] = {}
 
-    def add_paths():
-        calls.append("add_paths")
-        found.update(on_path_after)
+    def get_ffmpeg_exe():
+        calls.append("get_ffmpeg_exe")
+        if exe is None:
+            raise RuntimeError("No ffmpeg exe could be found")
+        return exe
 
-    fake = types.ModuleType("static_ffmpeg")
-    fake.add_paths = add_paths
-    monkeypatch.setitem(sys.modules, "static_ffmpeg", fake)
+    fake = types.ModuleType("imageio_ffmpeg")
+    fake.get_ffmpeg_exe = get_ffmpeg_exe
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", fake)
+    found = dict(on_path or {})
     monkeypatch.setattr(probe.shutil, "which", lambda name: found.get(name))
-    return calls, found
+    return calls
 
 
-def test_binary_falls_back_to_static_ffmpeg_when_not_on_path(monkeypatch):
-    calls, _ = _fake_static_ffmpeg(
-        monkeypatch, {"ffprobe": "/site-packages/static_ffmpeg/bin/ffprobe"}
-    )
-    assert probe._binary("ffprobe") == "/site-packages/static_ffmpeg/bin/ffprobe"
-    assert calls == ["add_paths"]
+def test_binary_falls_back_to_the_wheel_bundled_ffmpeg_when_not_on_path(monkeypatch):
+    calls = _fake_imageio_ffmpeg(monkeypatch, "/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux")
+    assert probe._binary("ffmpeg") == "/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux"
+    assert calls == ["get_ffmpeg_exe"]
 
 
 def test_binary_prefers_system_ffmpeg_and_skips_fallback(monkeypatch):
-    calls, found = _fake_static_ffmpeg(monkeypatch, {})
-    found["ffmpeg"] = "/opt/homebrew/bin/ffmpeg"
+    calls = _fake_imageio_ffmpeg(monkeypatch, "/bundled", on_path={"ffmpeg": "/opt/homebrew/bin/ffmpeg"})
     assert probe._binary("ffmpeg") == "/opt/homebrew/bin/ffmpeg"
     assert calls == []
 
 
 def test_binary_raises_probe_error_when_fallback_also_fails(monkeypatch):
-    _fake_static_ffmpeg(monkeypatch, {})
+    _fake_imageio_ffmpeg(monkeypatch, None)
     with pytest.raises(probe.ProbeError, match="ffmpeg is not installed"):
         probe._binary("ffmpeg")
+
+
+def test_nothing_asks_for_ffprobe_any_more():
+    """imageio-ffmpeg ships ffmpeg only, so the tool must never need ffprobe."""
+    import inspect
+    assert '_binary("ffprobe")' not in inspect.getsource(probe)
+
+
+# --- duration without ffprobe ---------------------------------------------------
+FFMPEG_I_STDERR = """Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'ad.mp4':
+  Metadata:
+    major_brand     : isom
+  Duration: 00:00:46.60, start: 0.000000, bitrate: 14825 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637634), yuv420p
+At least one output file must be specified
+"""
+
+
+def test_parse_duration_reads_ffmpeg_i_output():
+    assert probe._parse_duration(FFMPEG_I_STDERR) == pytest.approx(46.6)
+
+
+def test_parse_duration_handles_hours():
+    assert probe._parse_duration("  Duration: 01:02:03.50, start: 0") == pytest.approx(3723.5)
+
+
+def test_parse_duration_rejects_a_non_video():
+    with pytest.raises(probe.ProbeError, match="doesn't look like a video"):
+        probe._parse_duration("ad.mp4: Invalid data found when processing input\n")
