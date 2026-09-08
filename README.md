@@ -113,11 +113,12 @@ list in `requirements.in`, `pip install -r requirements.in`, run the tests, then
 `pip freeze > requirements.txt`. The Python version is chosen in the Streamlit
 app's *Advanced settings*, not in a file; the pins were verified on 3.13.
 
-Needs ffmpeg and ffprobe. Locally `brew install ffmpeg` is simplest; if they are
-not on PATH the app falls back to the `static-ffmpeg` pip package, which is also
-how Streamlit Cloud gets them. (There is deliberately no `packages.txt`: the
-Cloud image's apt sources include an expired Debian 11 feed, and any apt step
-fails before the app can start.)
+Needs ffmpeg only (no ffprobe). Locally `brew install ffmpeg` is simplest; if it is
+not on PATH the app uses the binary bundled inside the `imageio-ffmpeg` wheel,
+which is how Streamlit Cloud gets it — nothing is downloaded or written at runtime.
+(There is deliberately no `packages.txt`: the Cloud image's apt sources include an
+expired Debian 11 feed, and any apt step fails before the app can start. A
+runtime-download package was tried and failed live for the same class of reason.)
 
 To test the pipeline without the UI or Drive — this is the cheapest way to check
 a prompt change:
