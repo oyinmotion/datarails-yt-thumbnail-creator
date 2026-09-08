@@ -14,7 +14,7 @@ These override the style direction below in every case.
   person, not a better-looking person, not a stock-photography professional.
 - Count the people in the reference frames. Your image may contain **only**
   those people, and no more of them than the frames show. If they show nobody,
-  the image contains nobody.
+  the thumbnail contains nobody.
 - Any additional images you were given are there for VISUAL STYLE ONLY. If a
   person appears in one of them, that person is a stranger here. Never copy,
   trace or imitate a face from a style image.
