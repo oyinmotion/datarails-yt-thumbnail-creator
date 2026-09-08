@@ -98,6 +98,36 @@ LOGO_PLATE_DARK = (12, 20, 43)       # --dr-navy  #0C142B
 LOGO_PLATE_LIGHT = (255, 248, 238)   # --dr-cream #FFF8EE
 LOGO_PLATE_ALPHA = 255               # fully opaque: "solid colour" means solid
 
+# --- Typesetting -----------------------------------------------------------
+# The headline is set by us, not by the image model. Poppins is the design
+# system's face and is OFL-licensed, so the whole family can ship in the repo.
+FONTS_DIR = PROJECT_ROOT / "assets" / "fonts" / "poppins"
+HEADLINE_FONT = FONTS_DIR / "Poppins-Black.ttf"
+HEADLINE_FALLBACK_FONT = FONTS_DIR / "Poppins-SemiBold.ttf"
+# Cap height never below this fraction of canvas height: at the 320px width a
+# thumbnail actually occupies in a feed, that is still >= 14px of type.
+TEXT_FLOOR_FRACTION = 0.07
+# Text zones never enter this bottom band; it is where stamp_logo prefers to sit.
+TEXT_BOTTOM_RESERVE = 0.14
+# Text is drawn at this multiple of the art's size and composited down, so the
+# edges are anti-aliased rather than stepped.
+TEXT_SUPERSAMPLE = 2
+# Edge energy (mean of FIND_EDGES over the zone) above this means the model painted
+# detail into the reserved zone. Luminance spread is deliberately NOT used: a
+# smooth navy-to-orange gradient — exactly what a calm zone looks like — has a
+# spread of 13-47 but edge energy under 2, while faces and type score 12+.
+ZONE_EDGE_THRESHOLD = 5.0
+# Brand colours used by the type treatments (same values as the logo plates).
+NAVY = LOGO_PLATE_DARK
+CREAM = LOGO_PLATE_LIGHT
+WHITE = (255, 255, 255)
+PINK = (250, 53, 118)           # --dr-pink, the signature accent
+ORANGE = (255, 122, 0)          # the vivid orange of the house energy split
+# The caption pill's type: a fixed fraction of canvas height so its size is
+# known before the headline is fitted around it.
+CAPTION_FONT_FRACTION = 0.042
+CAPTION_FONT = FONTS_DIR / "Poppins-ExtraBold.ttf"
+
 # --- Output ratios ---------------------------------------------------------
 # (generation size, final size). Generation edges must be multiples of 16 for
 # gpt-image-2; the final sizes are the platform-native ones.

@@ -48,8 +48,14 @@ def main() -> int:
         if result.path:
             print(f"     {result.path}")
 
+    total = len(outcome.results)
     flagged = sum(1 for r in outcome.results if r.flagged or r.path is None)
-    print(f"\n{5 - flagged}/5 clean. Files in {work_dir / 'out'}")
+    print(f"\n{total - flagged}/{total} clean. Files in {work_dir / 'out'}")
+    print(f"Images billed: {outcome.images_billed} (calls: {outcome.render_calls}, "
+          f"re-rolls: {outcome.rerolls})")
+    if outcome.results and outcome.results[0].art_paths:
+        print(f"Art cached in {work_dir / 'art'} — try: "
+              "pipeline.retitle(outcome.results[0], 'NEW LINE')")
     return 0
 
 

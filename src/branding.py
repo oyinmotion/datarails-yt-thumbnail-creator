@@ -148,8 +148,47 @@ def _draw_plate(
     base.alpha_composite(overlay)
 
 
+def stamp_logo_image(base_rgb: Image.Image) -> Image.Image:
+    """Composite the logo onto a copy of `base_rgb`. Same size, RGB out.
+
+    Missing logo files are not fatal: log and return the image unchanged.
+    """
+    if not LOGO_LIGHT.exists() or not LOGO_DARK.exists():
+        log.warning("logo assets missing (%s, %s); leaving the image unbranded",
+                    LOGO_LIGHT, LOGO_DARK)
+        return base_rgb.copy()
+
+    base = base_rgb.convert("RGBA")
+    width, height = base.size
+    margin = max(1, round(width * LOGO_MARGIN_FRACTION))
+    target_w = max(1, round(width * LOGO_WIDTH_FRACTION))
+    # Probe with the light logo's proportions; both variants are the same shape.
+    with Image.open(LOGO_LIGHT) as probe:
+        target_h = max(1, round(probe.height * target_w / probe.width))
+
+    placement = plan_placement(base, target_w, target_h, margin)
+    if placement.needs_plate:
+        # Nowhere on this render is flat enough, so make somewhere flat. The
+        # plate goes down first, then the region is re-measured: the logo
+        # variant must suit the PLATE it now sits on, not the art underneath.
+        _draw_plate(base, placement.box, placement.on_light)
+        on_light = region_is_light(base, placement.box)
+        log.info("logo plated at %s (busy score %.1f)", placement.corner, placement.score)
+    else:
+        on_light = placement.on_light
+        log.info("logo placed bare at %s (busy score %.1f)", placement.corner, placement.score)
+
+    logo_path = LOGO_DARK if on_light else LOGO_LIGHT
+    with Image.open(logo_path) as opened_logo:
+        logo = opened_logo.convert("RGBA")
+        logo_h = max(1, round(logo.height * target_w / logo.width))
+        logo = logo.resize((target_w, logo_h), Image.LANCZOS)
+    base.alpha_composite(logo, (placement.box[0], placement.box[1]))
+    return base.convert("RGB")
+
+
 def stamp_logo(image_path: Path, out_path: Path | None = None) -> Path:
-    """Composite the logo onto the image. Returns the path written.
+    """File-based wrapper: composite the logo onto the image at `image_path`.
 
     Missing logo files are not fatal: a thumbnail without a logo is still a
     usable thumbnail, and losing a paid render over a missing asset would be
@@ -157,46 +196,12 @@ def stamp_logo(image_path: Path, out_path: Path | None = None) -> Path:
     """
     image_path = Path(image_path)
     out_path = Path(out_path) if out_path else image_path
-
     if not LOGO_LIGHT.exists() or not LOGO_DARK.exists():
         log.warning("logo assets missing (%s, %s); leaving the image unbranded",
                     LOGO_LIGHT, LOGO_DARK)
         return image_path
-
     with Image.open(image_path) as opened:
-        base = opened.convert("RGBA")
-
-    width, height = base.size
-    margin = max(1, round(width * LOGO_MARGIN_FRACTION))
-    target_w = max(1, round(width * LOGO_WIDTH_FRACTION))
-
-    # Probe with the light logo's proportions; both variants are the same shape.
-    with Image.open(LOGO_LIGHT) as probe:
-        target_h = max(1, round(probe.height * target_w / probe.width))
-
-    placement = plan_placement(base, target_w, target_h, margin)
-
-    if placement.needs_plate:
-        # Nowhere on this render is flat enough, so make somewhere flat. The
-        # plate goes down first, then the region is re-measured: the logo
-        # variant must suit the PLATE it now sits on, not the art underneath.
-        _draw_plate(base, placement.box, placement.on_light)
-        on_light = region_is_light(base, placement.box)
-        log.info("logo plated at %s (busy score %.1f)",
-                 placement.corner, placement.score)
-    else:
-        on_light = placement.on_light
-        log.info("logo placed bare at %s (busy score %.1f)",
-                 placement.corner, placement.score)
-
-    logo_path = LOGO_DARK if on_light else LOGO_LIGHT
-    with Image.open(logo_path) as opened_logo:
-        logo = opened_logo.convert("RGBA")
-        logo_h = max(1, round(logo.height * target_w / logo.width))
-        logo = logo.resize((target_w, logo_h), Image.LANCZOS)
-
-    base.alpha_composite(logo, (placement.box[0], placement.box[1]))
-
+        stamped = stamp_logo_image(opened.convert("RGB"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    base.convert("RGB").save(out_path, "PNG", optimize=True)
+    stamped.save(out_path, "PNG", optimize=True)
     return out_path

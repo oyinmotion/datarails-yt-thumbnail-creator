@@ -41,6 +41,10 @@ For each variant:
 - `scene_direction` — one sentence on what the background and composition should
   do. Describe light, colour, and energy, not text.
 - `rationale` — one sentence on why this hook comes out of this ad.
+- `caption` — optional. A second, quieter line of up to three words that adds a
+  beat the headline does not carry — a question ("Who's right?"), a tension, a
+  "vs". Written as speech, in sentence case, no ending period. Return `null`
+  when the headline stands alone; most concepts should.
 
 Also return `ad_summary`: one sentence on what the ad is about.
 

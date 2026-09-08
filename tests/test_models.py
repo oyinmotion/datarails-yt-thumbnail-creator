@@ -168,20 +168,17 @@ def test_style_is_not_a_model_field():
     assert "style" not in Variant.model_fields
 
 
-def test_each_style_brief_specifies_its_own_type_treatment():
-    """render.md no longer states type treatment globally, so every brief must.
-
-    Checks for type direction by any name — a brief may say "Headline in a heavy
-    condensed sans" or "Typography is the design"; both direct the type.
-    """
+def test_every_brief_specifies_background_and_subject_but_never_type():
+    """Type is set by src/typeset.py (TYPE_TREATMENTS), not drawn by the model.
+    A brief that described lettering invited stray text into the art."""
+    from src.models import STYLE_BRIEF
     for style, brief in STYLE_BRIEF.items():
-        lowered = brief.lower()
-        assert any(
-            word in lowered for word in ("headline", "typography", "type")
-        ), f"{style} brief must direct the type treatment"
-        assert any(
-            word in lowered for word in ("sans", "grotesque", "caps")
-        ), f"{style} brief must name a typeface character or case"
+        assert "BACKGROUND:" in brief, f"{style} brief must direct the background"
+        assert "SUBJECT:" in brief, f"{style} brief must direct the subject"
+        assert "TYPE:" not in brief, f"{style} brief must not describe type"
+        for word in ("sans", "grotesque", "typography", "lettering"):
+            assert word not in brief.lower(), f"{style} brief still describes type: {word!r}"
+
 
 
 def test_the_divergent_briefs_forbid_the_house_treatment():
@@ -234,3 +231,43 @@ def test_a_full_plan_is_rejected_when_only_two_were_asked_for():
     plan = _plan()
     with pytest.raises(ValueError, match="expected exactly 2"):
         plan.validate_matrix(matrix_for(2))
+
+
+def test_clean_headline_text_normalises_and_enforces_the_word_cap():
+    from src.models import clean_headline_text
+    assert clean_headline_text("  same   ai. ") == "SAME AI"
+    with pytest.raises(ValueError):
+        clean_headline_text("one two three four five six")
+    with pytest.raises(ValueError):
+        clean_headline_text("   ")
+
+
+# --- caption ---------------------------------------------------------------
+def test_clean_caption_text_keeps_case_and_caps_at_three_words():
+    from src.models import clean_caption_text
+    assert clean_caption_text("  who's   right? ") == "Who's right?"
+    assert clean_caption_text("vs.") == "Vs."
+    with pytest.raises(ValueError):
+        clean_caption_text("one two three four")
+
+
+def test_a_variant_may_carry_an_optional_caption():
+    from src.models import Variant
+    base = dict(index=1, hook_type="stat", treatment="split_screen", headline="SAME AI",
+                frame_id="scene_001.jpg", second_frame_id=None, scene_direction="x", rationale="y")
+    assert Variant(**base).caption is None
+    assert Variant(**base, caption="who's right?").caption == "Who's right?"
+    assert Variant(**base, caption="   ").caption is None, "blank means none"
+    with pytest.raises(Exception):
+        Variant(**base, caption="far too many words here")
+
+
+def test_the_house_brief_names_the_sticker_outline_and_the_seam_from_the_refs():
+    """The approved thumbnails cut the people out with a thick solid WHITE
+    outline — not a subtle rim — and burst rays from a lightning seam. The brief
+    must describe the look that was actually approved."""
+    from src.models import STYLE_BRIEF
+    brief = STYLE_BRIEF["house_energy"].lower()
+    assert "white" in brief and "outline" in brief and "sticker" in brief
+    assert "subtle light rim" not in brief
+    assert "rays" in brief and "lightning" in brief

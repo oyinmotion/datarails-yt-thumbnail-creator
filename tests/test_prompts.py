@@ -18,9 +18,14 @@ def _variant(
     )
 
 
-def test_all_three_prompt_files_load():
-    for name in ("planner", "render", "qa_legibility"):
+def test_the_prompt_files_load():
+    for name in ("planner", "render", "qa_likeness"):
         assert len(prompts.load(name)) > 200
+
+
+def test_the_legibility_prompt_is_gone():
+    with pytest.raises(FileNotFoundError):
+        prompts.load("qa_legibility")
 
 
 def test_missing_prompt_file_raises():
@@ -28,20 +33,9 @@ def test_missing_prompt_file_raises():
         prompts.load("does_not_exist")
 
 
-def test_render_prompt_contains_the_exact_headline_in_quotes():
-    text = prompts.render_prompt(_variant())
-    assert '"SAME AI DIFFERENT ANSWER"' in text
-
-
 def test_render_prompt_carries_the_treatment_brief():
     text = prompts.render_prompt(_variant(treatment="product_forward"))
     assert "FinanceOS" in text
-
-
-def test_render_prompt_forbids_extra_text():
-    text = prompts.render_prompt(_variant()).lower()
-    assert "other text" in text
-    assert "do not add" in text
 
 
 def test_render_prompt_has_no_unfilled_placeholders():
@@ -167,3 +161,61 @@ def test_one_concept_reads_as_singular():
     assert "exactly one variant," in prompts.planner_prompt(
         "t", None, None, variant_count=1
     )
+
+
+# --- art only ---------------------------------------------------------------
+
+
+def test_render_prompt_never_mentions_the_headline_text():
+    text = prompts.render_prompt(_variant(headline="SAME AI DIFFERENT ANSWER"))
+    assert "SAME AI DIFFERENT ANSWER" not in text
+    # The only permitted mentions say that WE add it; nothing may ask the model
+    # to render, place or style a headline.
+    stripped = (text.lower()
+                .replace("the headline is added afterwards by us", "")
+                .replace("we add the headline ourselves", ""))
+    assert "headline" not in stripped
+
+
+def test_render_prompt_forbids_all_text_and_reserves_the_zone():
+    flat = " ".join(prompts.render_prompt(
+        _variant(treatment="face_closeup", index=2, hook="question")).split()).lower()
+    assert "no text of any kind" in flat
+    assert "reserve a calm area" in flat
+    assert "left" in flat, "face_closeup reserves the left"
+
+
+def test_render_prompt_can_be_asked_for_another_style():
+    text = prompts.render_prompt(_variant(index=1), style="flat_graphic")
+    assert "flat-colour treatment" in text
+    assert "proven Datarails look" not in text
+
+
+def test_render_prompt_uses_the_tall_zone_for_9x16():
+    v = _variant(treatment="face_closeup", index=2, hook="question")
+    assert prompts.render_prompt(v, ratio="16x9") != prompts.render_prompt(v, ratio="9x16")
+
+
+def test_style_briefs_no_longer_describe_type():
+    from src.models import STYLE_BRIEF, TREATMENT_BRIEF
+    for brief in STYLE_BRIEF.values():
+        assert "TYPE:" not in brief
+    for brief in TREATMENT_BRIEF.values():
+        assert "headline" not in brief.lower()
+
+
+def test_headline_prompt_names_the_hook_and_the_current_line():
+    text = prompts.headline_prompt(_variant(hook="pain", treatment="text_dominant", index=4),
+                                   ad_summary="two colleagues disagree",
+                                   current="SAME AI DIFFERENT ANSWER")
+    assert "pain" in text and "SAME AI DIFFERENT ANSWER" in text
+    assert "two colleagues disagree" in text
+    assert "three" in text.lower()
+    assert "{" not in text
+
+
+def test_planner_prompt_offers_an_optional_three_word_caption():
+    text = prompts.planner_prompt(transcript="t", context=None, headline_override=None)
+    assert "`caption`" in text
+    assert "three words" in text.lower()
+    assert "null" in text.lower()

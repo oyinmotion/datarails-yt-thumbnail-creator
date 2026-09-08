@@ -60,3 +60,25 @@ def test_already_final_size_input_is_untouched_in_dimensions(tmp_path):
     out = finalize(_png_bytes(FINAL_W, FINAL_H), tmp_path / "v5.png")
     with Image.open(out) as im:
         assert im.size == (FINAL_W, FINAL_H)
+
+
+def test_finalize_image_downscales_once_to_delivery_size(tmp_path):
+    from PIL import Image
+    from src import postprocess
+    from src.config import FINAL_H, FINAL_W
+    big = Image.new("RGB", (2048, 1152), (12, 24, 48))
+    out = postprocess.finalize_image(big, tmp_path / "t.png")
+    with Image.open(out) as im:
+        assert im.size == (FINAL_W, FINAL_H)
+    assert out.suffix == ".png"
+
+
+def test_finalize_bytes_still_works_through_the_image_path(tmp_path):
+    import io
+    from PIL import Image
+    from src import postprocess
+    buf = io.BytesIO()
+    Image.new("RGB", (1088, 1088), (1, 2, 3)).save(buf, "PNG")
+    out = postprocess.finalize(buf.getvalue(), tmp_path / "s.png", final_size=(1080, 1080))
+    with Image.open(out) as im:
+        assert im.size == (1080, 1080)

@@ -42,41 +42,40 @@ MATRIX: list[tuple[int, HookType, Treatment, Style]] = [
 TREATMENT_BRIEF: dict[str, str] = {
     "split_screen": (
         "Both actors face off, one on each side, a hard vertical seam of light "
-        "between them. Headline centered on the seam."
+        "between them."
     ),
     "face_closeup": (
-        "One actor's face fills roughly half the frame with a clear reaction. "
-        "Headline stacked in the remaining space."
+        "One actor's face fills roughly half the frame with a clear reaction."
     ),
     "full_bleed": (
-        "A single dramatic energy burst fills the frame behind both actors. "
-        "Headline centered and dominant."
+        "A single dramatic energy burst fills the frame behind both actors."
     ),
     "text_dominant": (
-        "Typography carries the frame and the headline is the loudest element, "
-        "set very large. The actor is offset to one side rather than centred — "
-        "but still close, still big enough that their face and expression read "
-        "clearly at thumbnail size. Type dominance means the words are bigger, "
-        "not that the person is small or turned away."
+        "The actor is offset to one side rather than centred — but still close, "
+        "still big enough that their face and expression read clearly at "
+        "thumbnail size."
     ),
     "product_forward": (
         "The FinanceOS product surface or its mark is visible and legible, with "
-        "one actor presenting it. Headline supports rather than competes."
+        "one actor presenting it."
     ),
 }
 
-# Each brief must fully specify palette, lighting, subject treatment AND type
-# treatment, because prompts/render.md no longer states any of them globally —
-# that global block was what made all five renders look identical.
+# Each brief specifies palette, lighting and subject treatment. Type is NOT
+# described here any more: the headline is set by src/typeset.py, whose
+# TYPE_TREATMENTS carry the per-style type rules. Describing type to a model
+# that must render none of it only invited stray lettering.
 STYLE_BRIEF: dict[str, str] = {
     "house_energy": (
         "The proven Datarails look. Extremely high contrast, built to stop a "
-        "scroll. BACKGROUND: splits deep navy blue against vivid orange with hot "
-        "white light where they meet, carrying embers, sparks or light rays, lit "
-        "cinematically. SUBJECT: the cut-out people from the footage stand in "
-        "front of it with a subtle light rim separating them. TYPE: heavy "
-        "condensed sans, all caps, pure white with a thick dark outline and a "
-        "hard drop shadow."
+        "scroll. BACKGROUND: splits deep navy blue against vivid orange along a "
+        "jagged, hot-white lightning seam, with radial light rays bursting "
+        "outward from the centre of that seam and a scatter of embers and "
+        "sparks, lit cinematically. SUBJECT: the cut-out people from the "
+        "footage stand in front of it, each with a thick, clean, solid WHITE "
+        "sticker outline following their whole silhouette — the cut-out reads "
+        "like a die-cut sticker placed on the background, not a photo blended "
+        "into it."
     ),
     "dark_cinematic": (
         "Restrained and expensive, like a prestige drama poster. BACKGROUND: "
@@ -85,9 +84,7 @@ STYLE_BRIEF: dict[str, str] = {
         "glow effects. A single orange accent at most. SUBJECT: the cut-out "
         "person from the footage, placed against that darkness with a faint warm "
         "rim light along one edge so they separate from it — their face stays "
-        "bright enough to read clearly and is NOT lost in shadow. TYPE: heavy "
-        "condensed sans, all caps, off-white, tight tracking, no outline — "
-        "separation comes from the darkness behind it."
+        "bright enough to read clearly and is NOT lost in shadow."
     ),
     "flat_graphic": (
         "A bold flat-colour treatment. BACKGROUND: two or three solid flat "
@@ -96,9 +93,7 @@ STYLE_BRIEF: dict[str, str] = {
         "scenery. SUBJECT: the cut-out person from the footage sits on those "
         "colour fields with a crisp offset shadow, kept LARGE in the frame with "
         "their expression fully readable — this is a thumbnail, not a minimal "
-        "print poster, so never shrink them or turn them away. TYPE: very large, "
-        "all caps, heavy grotesque, navy on the orange field or knocked out to "
-        "off-white, aligned hard to the layout."
+        "print poster, so never shrink them or turn them away."
     ),
     "clean_corporate": (
         "Calm software credibility, bright and modern. BACKGROUND: a clean, "
@@ -108,13 +103,14 @@ STYLE_BRIEF: dict[str, str] = {
         "contact shadow so they separate from it. They keep the clothing they "
         "are wearing in the footage — do not put them in different clothes, a "
         "different setting, an office, or at a desk, and do not replace them "
-        "with anyone else. TYPE: heavy sans, all caps, deep navy on the light "
-        "background, no outline and no shadow — contrast alone carries it. One "
-        "vivid orange accent at most."
+        "with anyone else. One vivid orange accent at most."
     ),
 }
 
 MAX_HEADLINE_WORDS = 5
+# The caption is a second, quieter beat under the headline — "Who's right?" in the
+# approved refs. Speech, not shouting: it keeps its case and stays short.
+MAX_CAPTION_WORDS = 3
 
 # How many concepts a batch may ask for. The ceiling is the matrix itself: every
 # row is a distinct hook/treatment/style pairing, and asking for more would mean
@@ -155,6 +151,41 @@ def style_for(index: int) -> Style:
     raise ValueError(f"no style for slot {index}; valid slots are 1-{len(MATRIX)}")
 
 
+def clean_headline_text(text: str) -> str:
+    """One rule for every headline the tool accepts, planned or suggested."""
+    v = " ".join((text or "").split()).rstrip(".").strip().upper()
+    if not v:
+        raise ValueError("headline cannot be empty")
+    if len(v.split()) > MAX_HEADLINE_WORDS:
+        raise ValueError(
+            f"headline must be {MAX_HEADLINE_WORDS} words or fewer, got "
+            f"{len(v.split())}: {v!r}"
+        )
+    return v
+
+
+def clean_caption_text(text: str) -> str | None:
+    """Sentence case kept, whitespace collapsed, first letter capitalised.
+
+    Returns None for a blank caption: the planner may leave it out, and so may
+    the user. Raises ValueError past MAX_CAPTION_WORDS.
+    """
+    v = " ".join((text or "").split())
+    if not v:
+        return None
+    if len(v.split()) > MAX_CAPTION_WORDS:
+        raise ValueError(
+            f"caption must be {MAX_CAPTION_WORDS} words or fewer, got "
+            f"{len(v.split())}: {v!r}"
+        )
+    return v[0].upper() + v[1:]
+
+
+class HeadlineOptions(BaseModel):
+    """Structured output for 'more lines': the planner returns only headlines."""
+    headlines: list[str]
+
+
 class Variant(BaseModel):
     # No Field(ge=..., le=...) here, and no Field(min_length=...) on
     # BatchPlan.variants: both emit JSON Schema keywords (minimum/maximum,
@@ -170,6 +201,9 @@ class Variant(BaseModel):
     second_frame_id: str | None = None
     scene_direction: str
     rationale: str
+    # Optional second line, set as a small pill under the headline. Same
+    # nullable-string shape as second_frame_id, so the strict schema accepts it.
+    caption: str | None = None
 
     @property
     def style(self) -> Style:
@@ -179,15 +213,12 @@ class Variant(BaseModel):
     @field_validator("headline")
     @classmethod
     def clean_headline(cls, v: str) -> str:
-        v = " ".join(v.split()).rstrip(".").strip().upper()
-        if not v:
-            raise ValueError("headline cannot be empty")
-        if len(v.split()) > MAX_HEADLINE_WORDS:
-            raise ValueError(
-                f"headline must be {MAX_HEADLINE_WORDS} words or fewer, got "
-                f"{len(v.split())}: {v!r}"
-            )
-        return v
+        return clean_headline_text(v)
+
+    @field_validator("caption")
+    @classmethod
+    def clean_caption(cls, v: str | None) -> str | None:
+        return clean_caption_text(v) if v is not None else None
 
 
 class BatchPlan(BaseModel):
