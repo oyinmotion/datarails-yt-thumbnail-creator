@@ -64,7 +64,7 @@ def wired(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         typeset, "typeset",
-        lambda art, headline, style, treatment, ratio, scrim=False:
+        lambda art, headline, style, treatment, ratio, caption=None, scrim=False:
             typeset.TypesetResult(image=art, notes=[], scrimmed=scrim),
     )
     monkeypatch.setattr(branding, "stamp_logo_image", lambda img: img)
@@ -594,3 +594,43 @@ def test_reroll_keeps_the_hard_contract_when_the_api_fails(wired, tmp_path, monk
     assert "503" in new.note
     assert outcome.images_billed == 3, "failed calls are not billed"
     assert outcome.render_calls == 3 + 6, "two attempts per ratio were made"
+
+
+# --- caption flows through ----------------------------------------------------
+def _plan_with_caption():
+    p = _plan_of(1)
+    p.variants[0].caption = "Who's right?"
+    return p
+
+
+def test_the_planned_caption_reaches_the_result_and_the_typesetter(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_with_caption())
+    seen = []
+
+    def spy(art, headline, style, treatment, ratio, caption=None, scrim=False):
+        seen.append(caption)
+        return typeset.TypesetResult(image=art, notes=[], scrimmed=scrim)
+
+    monkeypatch.setattr(typeset, "typeset", spy)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert outcome.results[0].caption == "Who's right?"
+    assert seen == ["Who's right?"] * 3
+
+
+def test_retitle_can_change_the_caption_alone_and_keep_the_headline(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_with_caption())
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    r = outcome.results[0]
+    new = pipeline.retitle(r, caption="Still sure?")
+    assert new.headline == r.headline and new.caption == "Still sure?"
+    cleared = pipeline.retitle(new, caption="")
+    assert cleared.caption is None and cleared.headline == r.headline
+    renamed = pipeline.retitle(cleared, headline="new line")
+    assert renamed.headline == "NEW LINE" and renamed.caption is None
+
+
+def test_reroll_keeps_the_caption(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_with_caption())
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    new = pipeline.reroll(outcome.results[0], outcome)
+    assert new.caption == "Who's right?"

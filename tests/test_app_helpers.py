@@ -272,3 +272,12 @@ def test_replace_result_swaps_the_row_with_the_same_index():
 def test_same_headline_ignores_case_and_spacing():
     assert app.same_headline("same  ai", "SAME AI")
     assert not app.same_headline("same ai", "SAME AI TWO")
+
+
+def test_download_name_marks_an_edited_caption_too():
+    r = _row()
+    r.variant.caption = "Who's right?"
+    r.caption = "Who's right?"
+    assert app.download_name(r, "16x9") == "01_stat_split_screen_16x9.png"
+    r.caption = "Still sure?"
+    assert app.download_name(r, "16x9") == "01_stat_split_screen_16x9_edited.png"

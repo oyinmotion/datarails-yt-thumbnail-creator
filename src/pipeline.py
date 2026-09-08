@@ -54,6 +54,7 @@ class RenderOutcome:
     art_path: Path | None = None
     style: str = ""
     headline: str = ""
+    caption: str | None = None
     flagged: bool = False
     note: str = ""
     unverified: bool = False
@@ -72,6 +73,7 @@ class ThumbResult:
     art_paths: dict[str, Path] = field(default_factory=dict)
     style: str = ""              # current look; differs from variant.style after swap
     headline: str = ""           # current headline; differs from the plan after an edit
+    caption: str | None = None   # current caption pill, if any
     flagged: bool = False
     note: str = ""
     # True when a render was handed over without the likeness model ever
@@ -119,7 +121,7 @@ def _other_frame(frames: dict[str, Path], used: str) -> Path | None:
 
 def compose(
     art_path: Path, headline: str, style: str, treatment: str, ratio: str,
-    out_path: Path, scrim: bool = False,
+    out_path: Path, scrim: bool = False, caption: str | None = None,
 ) -> tuple[Path, list[str]]:
     """Art on disk → delivered thumbnail on disk. Pure Pillow, ~100ms.
 
@@ -127,7 +129,8 @@ def compose(
     """
     with Image.open(art_path) as opened:
         art = opened.convert("RGB")
-    set_ = typeset.typeset(art, headline, style, treatment, ratio, scrim=scrim)
+    set_ = typeset.typeset(art, headline, style, treatment, ratio,
+                           caption=caption, scrim=scrim)
     branded = branding.stamp_logo_image(set_.image)
     written = postprocess.finalize_image(branded, out_path, final_size=RATIOS[ratio][1])
     return written, list(set_.notes)
@@ -144,6 +147,7 @@ def _one_render(
     people_in_ad: bool = True,
     style: str | None = None,
     headline: str | None = None,
+    caption: str | None = None,
 ) -> RenderOutcome:
     """Render art, gate it, compose. One reroll at most, then flag and move on.
 
@@ -154,6 +158,7 @@ def _one_render(
     sleeper = sleeper or DEFAULT_SLEEPER
     style = style or variant.style
     headline = headline or variant.headline
+    caption = variant.caption if caption is None else (caption or None)
     # Deterministic per-variant offset: without it all variants wake from
     # backoff at the same instant and re-collide with the same rate limit.
     offset = variant.index * backoff.STAGGER
@@ -167,7 +172,7 @@ def _one_render(
 
     def _done(**kw) -> RenderOutcome:
         return RenderOutcome(variant=variant, ratio=ratio, style=style, headline=headline,
-                             attempts=attempts, billed=billed, **kw)
+                             caption=caption, attempts=attempts, billed=billed, **kw)
 
     try:
         zone_busy = False
@@ -209,7 +214,7 @@ def _one_render(
 
             if gate.ok and not zone_busy:
                 path, notes = compose(art_path, headline, style, variant.treatment,
-                                      ratio, out_path)
+                                      ratio, out_path, caption=caption)
                 return _done(path=path, art_path=art_path, unverified=gate.unverified,
                              flagged=bool(notes), note="; ".join(notes))
 
@@ -240,7 +245,7 @@ def _one_render(
             # Second failure: still hand it over, flagged. A zone that is still
             # busy gets a scrim under the type so the headline stays legible.
             path, notes = compose(art_path, headline, style, variant.treatment,
-                                  ratio, out_path, scrim=zone_busy)
+                                  ratio, out_path, scrim=zone_busy, caption=caption)
             return _done(path=path, art_path=art_path, flagged=True,
                          note="; ".join([last_note] + notes),
                          unverified=gate.unverified)
@@ -271,6 +276,7 @@ def _group_by_variant(
         row = by_index[outcome.variant.index]
         row.style = outcome.style
         row.headline = outcome.headline
+        row.caption = outcome.caption
         row.render_calls += outcome.attempts
         row.images_billed += outcome.billed
         if outcome.path is not None:
@@ -369,15 +375,23 @@ def generate_batch(
 
 
 # --- per-tile actions -------------------------------------------------------
-def retitle(result: ThumbResult, headline: str) -> ThumbResult:
-    """Re-set the headline on every ratio's cached art. No API call.
+KEEP = object()     # retitle(): "leave this field as it is"
 
-    Returns a new row; the caller swaps it in. Notes from typesetting (too long,
-    scrim) become the row's flag, replacing whatever the previous compose said.
+
+def retitle(result: ThumbResult, headline=KEEP, caption=KEEP) -> ThumbResult:
+    """Re-set the headline and/or caption on every ratio's cached art. No API call.
+
+    Pass a string to change a field, "" to clear the caption, or leave the
+    default to keep it. Returns a new row; the caller swaps it in. Notes from
+    typesetting (too long, scrim) become the row's flag.
     """
+    new_headline = (result.headline if headline is KEEP
+                    else " ".join((headline or "").upper().split()) or result.headline)
+    new_caption = (result.caption if caption is KEEP
+                   else (" ".join((caption or "").split()) or None))
     new = ThumbResult(
         variant=result.variant, art_paths=dict(result.art_paths), style=result.style,
-        headline=" ".join((headline or "").upper().split()),
+        headline=new_headline, caption=new_caption,
         unverified=result.unverified,
         render_calls=result.render_calls, images_billed=result.images_billed,
     )
@@ -386,7 +400,8 @@ def retitle(result: ThumbResult, headline: str) -> ThumbResult:
         out_path = art_path.parent.parent / "out" / art_path.name
         try:
             path, tile_notes = compose(art_path, new.headline, new.style,
-                                       result.variant.treatment, ratio, out_path)
+                                       result.variant.treatment, ratio, out_path,
+                                       caption=new.caption)
             new.paths[ratio] = path
             notes += [n if ratio == PRIMARY_RATIO else f"{ratio}: {n}" for n in tile_notes]
         except Exception as exc:
@@ -417,6 +432,7 @@ def reroll(
                 result.variant, ratio, outcome.frames, art_dir, out_dir, client,
                 sleeper=sleeper, people_in_ad=outcome.people_in_ad,
                 style=style or result.style, headline=result.headline,
+                caption=result.caption or "",
             ),
             ratios,
         ))

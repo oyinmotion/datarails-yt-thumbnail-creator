@@ -158,7 +158,9 @@ def same_headline(a: str, b: str) -> bool:
 
 def download_name(result: ThumbResult, ratio: str) -> str:
     path = result.paths[ratio]
-    if result.headline and not same_headline(result.headline, result.variant.headline):
+    headline_changed = result.headline and not same_headline(result.headline, result.variant.headline)
+    caption_changed = (result.caption or None) != (result.variant.caption or None)
+    if headline_changed or caption_changed:
         return f"{path.stem}_edited{path.suffix}"
     return path.name
 
@@ -440,8 +442,21 @@ def _render_card(outcome: BatchOutcome, result: ThumbResult, ratio: str, tab_lab
     )
     if new_headline.strip() and not same_headline(new_headline, result.headline) and not busy:
         with st.status("Re-setting the headline…", expanded=False):
-            replace_result(outcome, retitle(result, new_headline))
+            replace_result(outcome, retitle(result, headline=new_headline))
         st.rerun()
+
+    st.session_state.setdefault(f"cap_{idx}", result.caption or "")
+    new_caption = st.text_input(
+        "Caption", key=f"cap_{idx}", disabled=busy, placeholder="optional, up to 3 words",
+        help="A small pill under the headline, like \"Who's right?\". Leave empty for none.",
+    )
+    if " ".join(new_caption.split()) != (result.caption or "") and not busy:
+        if len(new_caption.split()) > 3:
+            st.warning("Captions are three words at most.")
+        else:
+            with st.status("Re-setting the caption…", expanded=False):
+                replace_result(outcome, retitle(result, caption=new_caption))
+            st.rerun()
 
     c1, c2, c3 = st.columns([1.0, 1.4, 1.0])
     if c1.button("3 more lines", key=f"more_{idx}", disabled=busy):
@@ -458,7 +473,7 @@ def _render_card(outcome: BatchOutcome, result: ThumbResult, ratio: str, tab_lab
         if pick and not same_headline(pick, result.headline):
             st.session_state[f"hl_pending_{idx}"] = pick
             st.session_state.pop(f"pick_{idx}", None)
-            replace_result(outcome, retitle(result, pick))
+            replace_result(outcome, retitle(result, headline=pick))
             st.rerun()
 
     if c2.button(price_label(3), key=f"reroll_{idx}", disabled=busy):
