@@ -19,9 +19,24 @@ class ProbeError(RuntimeError):
 def _binary(name: str) -> str:
     path = shutil.which(name)
     if not path:
+        # Nothing on PATH. Streamlit Cloud used to get ffmpeg from packages.txt
+        # via apt, until the platform image's Debian 11 security source expired
+        # at the end of LTS (Aug 2026) and every apt install started failing
+        # before the app could boot. static-ffmpeg ships ffmpeg and ffprobe
+        # through pip instead: add_paths() downloads the pair once per
+        # container (~5s) and puts them on PATH. A system install still wins,
+        # so `brew install ffmpeg` keeps working locally.
+        try:
+            import static_ffmpeg
+
+            static_ffmpeg.add_paths()
+        except Exception as exc:  # missing package, no network, bad platform
+            log.warning("static-ffmpeg fallback failed: %s", exc)
+        path = shutil.which(name)
+    if not path:
         raise ProbeError(
-            f"{name} is not installed. On Streamlit Cloud this comes from "
-            "packages.txt; locally, `brew install ffmpeg`."
+            f"{name} is not installed. It comes from the static-ffmpeg package "
+            "in requirements.txt; locally, `brew install ffmpeg` also works."
         )
     return path
 

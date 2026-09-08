@@ -82,3 +82,46 @@ def test_extract_frames_interval_fallback_with_real_ffmpeg(tmp_path, monkeypatch
     # Assert frames are distinct (no byte-level duplicates)
     digests = {f.read_bytes()[:2048] for f in frames}
     assert len(digests) == len(frames)
+
+
+# --- binary lookup -----------------------------------------------------------
+# Streamlit Cloud can no longer apt-install ffmpeg (its image carries an expired
+# Debian 11 security source), so the binaries come from the static-ffmpeg pip
+# package when nothing is on PATH. These tests never touch the network: the
+# module is faked in sys.modules and shutil.which is stubbed.
+
+def _fake_static_ffmpeg(monkeypatch, on_path_after: dict[str, str]):
+    import sys, types
+    calls = []
+    found: dict[str, str] = {}
+
+    def add_paths():
+        calls.append("add_paths")
+        found.update(on_path_after)
+
+    fake = types.ModuleType("static_ffmpeg")
+    fake.add_paths = add_paths
+    monkeypatch.setitem(sys.modules, "static_ffmpeg", fake)
+    monkeypatch.setattr(probe.shutil, "which", lambda name: found.get(name))
+    return calls, found
+
+
+def test_binary_falls_back_to_static_ffmpeg_when_not_on_path(monkeypatch):
+    calls, _ = _fake_static_ffmpeg(
+        monkeypatch, {"ffprobe": "/site-packages/static_ffmpeg/bin/ffprobe"}
+    )
+    assert probe._binary("ffprobe") == "/site-packages/static_ffmpeg/bin/ffprobe"
+    assert calls == ["add_paths"]
+
+
+def test_binary_prefers_system_ffmpeg_and_skips_fallback(monkeypatch):
+    calls, found = _fake_static_ffmpeg(monkeypatch, {})
+    found["ffmpeg"] = "/opt/homebrew/bin/ffmpeg"
+    assert probe._binary("ffmpeg") == "/opt/homebrew/bin/ffmpeg"
+    assert calls == []
+
+
+def test_binary_raises_probe_error_when_fallback_also_fails(monkeypatch):
+    _fake_static_ffmpeg(monkeypatch, {})
+    with pytest.raises(probe.ProbeError, match="ffmpeg is not installed"):
+        probe._binary("ffmpeg")
