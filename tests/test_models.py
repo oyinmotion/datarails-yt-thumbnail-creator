@@ -240,3 +240,23 @@ def test_clean_headline_text_normalises_and_enforces_the_word_cap():
         clean_headline_text("one two three four five six")
     with pytest.raises(ValueError):
         clean_headline_text("   ")
+
+
+# --- caption ---------------------------------------------------------------
+def test_clean_caption_text_keeps_case_and_caps_at_three_words():
+    from src.models import clean_caption_text
+    assert clean_caption_text("  who's   right? ") == "Who's right?"
+    assert clean_caption_text("vs.") == "Vs."
+    with pytest.raises(ValueError):
+        clean_caption_text("one two three four")
+
+
+def test_a_variant_may_carry_an_optional_caption():
+    from src.models import Variant
+    base = dict(index=1, hook_type="stat", treatment="split_screen", headline="SAME AI",
+                frame_id="scene_001.jpg", second_frame_id=None, scene_direction="x", rationale="y")
+    assert Variant(**base).caption is None
+    assert Variant(**base, caption="who's right?").caption == "Who's right?"
+    assert Variant(**base, caption="   ").caption is None, "blank means none"
+    with pytest.raises(Exception):
+        Variant(**base, caption="far too many words here")

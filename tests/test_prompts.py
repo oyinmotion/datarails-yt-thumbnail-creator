@@ -212,3 +212,10 @@ def test_headline_prompt_names_the_hook_and_the_current_line():
     assert "two colleagues disagree" in text
     assert "three" in text.lower()
     assert "{" not in text
+
+
+def test_planner_prompt_offers_an_optional_three_word_caption():
+    text = prompts.planner_prompt(transcript="t", context=None, headline_override=None)
+    assert "`caption`" in text
+    assert "three words" in text.lower()
+    assert "null" in text.lower()

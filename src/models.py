@@ -104,6 +104,9 @@ STYLE_BRIEF: dict[str, str] = {
 }
 
 MAX_HEADLINE_WORDS = 5
+# The caption is a second, quieter beat under the headline — "Who's right?" in the
+# approved refs. Speech, not shouting: it keeps its case and stays short.
+MAX_CAPTION_WORDS = 3
 
 # How many concepts a batch may ask for. The ceiling is the matrix itself: every
 # row is a distinct hook/treatment/style pairing, and asking for more would mean
@@ -157,6 +160,23 @@ def clean_headline_text(text: str) -> str:
     return v
 
 
+def clean_caption_text(text: str) -> str | None:
+    """Sentence case kept, whitespace collapsed, first letter capitalised.
+
+    Returns None for a blank caption: the planner may leave it out, and so may
+    the user. Raises ValueError past MAX_CAPTION_WORDS.
+    """
+    v = " ".join((text or "").split())
+    if not v:
+        return None
+    if len(v.split()) > MAX_CAPTION_WORDS:
+        raise ValueError(
+            f"caption must be {MAX_CAPTION_WORDS} words or fewer, got "
+            f"{len(v.split())}: {v!r}"
+        )
+    return v[0].upper() + v[1:]
+
+
 class HeadlineOptions(BaseModel):
     """Structured output for 'more lines': the planner returns only headlines."""
     headlines: list[str]
@@ -177,6 +197,9 @@ class Variant(BaseModel):
     second_frame_id: str | None = None
     scene_direction: str
     rationale: str
+    # Optional second line, set as a small pill under the headline. Same
+    # nullable-string shape as second_frame_id, so the strict schema accepts it.
+    caption: str | None = None
 
     @property
     def style(self) -> Style:
@@ -187,6 +210,11 @@ class Variant(BaseModel):
     @classmethod
     def clean_headline(cls, v: str) -> str:
         return clean_headline_text(v)
+
+    @field_validator("caption")
+    @classmethod
+    def clean_caption(cls, v: str | None) -> str | None:
+        return clean_caption_text(v) if v is not None else None
 
 
 class BatchPlan(BaseModel):
