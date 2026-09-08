@@ -41,10 +41,20 @@ ordered — asking for two gives you the top two, not a random two:
 Two are the proven house style, so you always have something safe to ship. Three
 are genuine alternatives, so you learn what actually wins.
 
-If a tile is marked ⚠️, the tool rendered it but couldn't verify it — read the
-note. It checks two things on every render: that the headline is still readable
-at the size a thumbnail actually appears in a feed, and that the person in it is
-really the actor from the ad rather than someone the model invented.
+If a tile is marked ⚠️, read the note. The headline itself is never the problem
+any more — it is set by the tool, not drawn by the model, in Poppins Black at a
+size that survives the 320px a thumbnail gets in a feed. What can still be
+flagged: the person in the render is not the actor from the ad (the likeness
+check), the model painted detail into the area reserved for the headline (the
+tool re-rolls once, then sets the type over a soft plate), or a headline too
+long for that layout.
+
+Under every concept, on the 16:9 tab: **edit the headline** and press Enter to
+re-set it on all three sizes for free; **3 more lines** asks for alternatives;
+**Re-roll art** regenerates just that concept's picture (three images); **Look**
+re-renders it in another style — marked *off-matrix* so you know it was a
+deliberate step outside the locked pairings. Downloads of an edited headline
+carry an `_edited` suffix.
 
 There is no "save as reference" button any more. It used to copy a tile into
 `refs/winners/`, but with `SEND_STYLE_REFS` off (see below) nothing in that
@@ -57,8 +67,17 @@ How references should work is an open question for a later round.
 ffmpeg pulls scene-change frames and the audio out of the ad. A planner model
 reads them and writes the hook/layout concepts. Concurrent `gpt-image-2` renders
 use frames from the ad itself as references — which is what keeps the actors
-looking like themselves — and nothing else. Every render is then read back by a
-vision model before you see it.
+looking like themselves — and nothing else. Every render is then checked by a
+vision model for one thing before you see it: is that really the actor?
+
+The model renders the **artwork only** — background, the cut-out actors, the
+energy — with a calm area reserved where the headline will go. The headline is
+then set by `src/typeset.py` in Poppins Black with the type treatment each style
+calls for, the logo is stamped, and the whole canvas is downscaled exactly once
+from the model's native size (2048×1152 for 16:9) to the delivery size. Text is
+drawn at twice the canvas size and composited down, so its edges are smooth;
+nothing is ever scaled twice. Because the tool sets the type, editing a headline
+costs nothing and never needs a new render.
 
 The four approved thumbnails in `refs/style/` are **not** sent to the model
 (`SEND_STYLE_REFS` in `src/config.py`, off). Every one of them is a finished
@@ -68,10 +87,9 @@ house look now travels as prose in `STYLE_BRIEF`, which describes palette,
 lighting, subject treatment and type per style. Turn the switch back on only
 with reference images that contain no people.
 
-Renders are generated at 2048×1152 and downscaled to exactly 1920×1080:
-`gpt-image-2` requires both edges to be multiples of 16, and 1080 is not
-(1080 ÷ 16 = 67.5), so 1920×1080 cannot be requested directly. Files over
-YouTube's 2 MB cap fall back to JPEG quality 92.
+Art is generated at 2048×1152 because `gpt-image-2` requires both edges to be
+multiples of 16, and 1080 is not (1080 ÷ 16 = 67.5), so 1920×1080 cannot be
+requested directly. Files over YouTube's 2 MB cap fall back to JPEG quality 92.
 
 Every render carries the Datarails logo, composited from the real asset rather
 than drawn by the model. It always sits on flat colour — never over texture,
