@@ -46,10 +46,11 @@ note. It checks two things on every render: that the headline is still readable
 at the size a thumbnail actually appears in a feed, and that the person in it is
 really the actor from the ad rather than someone the model invented.
 
-**⭐ Save as reference** teaches the tool your taste — but only for the current
-session. Making a reference permanent means committing the file to
-`refs/winners/` in this repo, because the deployed filesystem is wiped on every
-restart.
+There is no "save as reference" button any more. It used to copy a tile into
+`refs/winners/`, but with `SEND_STYLE_REFS` off (see below) nothing in that
+folder is ever sent to the model, and on Streamlit Cloud the file was wiped on
+the next restart anyway — so the button promised guidance it could not give.
+How references should work is an open question for a later round.
 
 ## How it works
 
@@ -102,6 +103,13 @@ concepts. Raising it means adding rows to `MATRIX` in `src/models.py`.
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill it in
 .venv/bin/streamlit run app.py
 ```
+
+Dependencies are pinned exactly in `requirements.txt` — the set every test passed
+on. Streamlit Cloud reinstalls on each reboot, and loose ranges once let a reboot
+pull in versions the tests had never seen. To upgrade on purpose: edit the loose
+list in `requirements.in`, `pip install -r requirements.in`, run the tests, then
+`pip freeze > requirements.txt`. The Python version is chosen in the Streamlit
+app's *Advanced settings*, not in a file; the pins were verified on 3.13.
 
 Needs ffmpeg and ffprobe. Locally `brew install ffmpeg` is simplest; if they are
 not on PATH the app falls back to the `static-ffmpeg` pip package, which is also
