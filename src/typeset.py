@@ -16,10 +16,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 from . import branding
 from .config import (
+    CAPTION_FONT,
+    CAPTION_FONT_FRACTION,
     CREAM,
     HEADLINE_FALLBACK_FONT,
     HEADLINE_FONT,
     NAVY,
+    ORANGE,
+    PINK,
     TEXT_BOTTOM_RESERVE,
     TEXT_FLOOR_FRACTION,
     TEXT_SUPERSAMPLE,
@@ -223,12 +227,31 @@ TYPE_TREATMENTS: dict[str, TypeTreatment] = {
 }
 
 
+@dataclass(frozen=True)
+class PillTreatment:
+    """The caption pill per style: fill, text colour, optional edge."""
+    fill: tuple[int, int, int]
+    text: tuple[int, int, int]
+    edge: tuple[int, int, int] | None = None
+
+
+PILL_TREATMENTS: dict[str, PillTreatment] = {
+    "house_energy":    PillTreatment(CREAM, NAVY, PINK),       # the approved refs' look
+    "dark_cinematic":  PillTreatment(NAVY, CREAM),
+    "flat_graphic":    PillTreatment(ORANGE, NAVY),
+    "clean_corporate": PillTreatment(NAVY, CREAM),
+}
+
+
 @dataclass
 class TypesetResult:
     image: Image.Image
     notes: list[str]
     scrimmed: bool = False
     overflowed: bool = False
+    # Where things landed, in art pixels. For tests and for the UI's overlays.
+    headline_box: tuple[int, int, int, int] | None = None
+    caption_box: tuple[int, int, int, int] | None = None
 
 
 def edge_energy(image: Image.Image, box: tuple[int, int, int, int]) -> float:
@@ -263,9 +286,25 @@ def _draw_scrim(canvas: Image.Image, box: tuple[int, int, int, int], dark: bool)
     canvas.alpha_composite(overlay)
 
 
+def _pill_metrics(canvas_height: int) -> tuple[int, int, int]:
+    """(font size, pill height, gap above the pill), all in 1x art pixels."""
+    size = max(12, round(canvas_height * CAPTION_FONT_FRACTION))
+    pill_h = round(size * 1.9)
+    gap = round(size * 0.9)
+    return size, pill_h, gap
+
+
+def _load_caption_font(size: int) -> ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype(str(CAPTION_FONT), size)
+    except OSError:
+        log.warning("caption font %s not loadable; using the headline face", CAPTION_FONT)
+        return load_font(size)
+
+
 def typeset(
     art: Image.Image, headline: str, style: str, treatment: str, ratio: str,
-    *, scrim: bool = False,
+    *, caption: str | None = None, scrim: bool = False,
 ) -> TypesetResult:
     """Set `headline` into the zone on a copy of `art`, at the art's own size.
 
@@ -289,7 +328,15 @@ def typeset(
         _draw_scrim(canvas, box, dark=not dark_type)
         notes.append("set over a scrim — art ignored the text zone")
 
-    fit = fit_headline(headline, HEADLINE_FONT, box, floor=floor_px(canvas.height))
+    # A caption takes a fixed slice off the bottom of the zone before the
+    # headline is fitted, so the pair always fits together.
+    caption = " ".join((caption or "").split()) or None
+    head_box = box
+    if caption:
+        _c_size, pill_h, gap = _pill_metrics(canvas.height)
+        head_box = (box[0], box[1], box[2], max(box[1] + 1, box[3] - pill_h - gap))
+
+    fit = fit_headline(headline, HEADLINE_FONT, head_box, floor=floor_px(canvas.height))
     if not fit.fits:
         notes.append("headline too long for this layout")
 
@@ -303,9 +350,10 @@ def typeset(
     shadow_d = round(fit.size * s * look.shadow_frac) if look.shadow else 0
     top_offset = font.getbbox("H")[1]       # keeps the cap where we measured it
 
-    bx0, by0, bx1, by1 = (v * s for v in box)
+    bx0, by0, bx1, by1 = (v * s for v in head_box)
     block_h = cap + leading * (len(fit.lines) - 1)
     y = by0 + max(0, ((by1 - by0) - block_h) // 2)
+    block_top = y
     for line in fit.lines:
         w = font.getlength(line)
         x = bx0 if zone.align == "left" else bx0 + ((bx1 - bx0) - w) / 2
@@ -316,8 +364,35 @@ def typeset(
                   stroke_width=stroke_w,
                   stroke_fill=(*look.stroke, 255) if look.stroke else None)
         y += leading
+    block_bottom = block_top + block_h
+    headline_box = (round(bx0 / s), round(block_top / s), round(bx1 / s), round(block_bottom / s))
+
+    caption_box = None
+    if caption:
+        c_size, pill_h, gap = _pill_metrics(canvas.height)
+        pill = PILL_TREATMENTS[style]
+        cfont = _load_caption_font(c_size * s)
+        tb = cfont.getbbox(caption)
+        text_w, text_h = tb[2] - tb[0], tb[3] - tb[1]
+        pad_x = round(c_size * s * 0.7)
+        ph = pill_h * s
+        pw = text_w + 2 * pad_x
+        # Below the headline block, aligned like it, clamped to the zone.
+        zx0, zy0, zx1, zy1 = (v * s for v in box)
+        py0 = min(block_bottom + gap * s, zy1 - ph)
+        px0 = zx0 if zone.align == "left" else zx0 + ((zx1 - zx0) - pw) / 2
+        px0 = max(zx0, min(px0, zx1 - pw))
+        edge_w = round(ph * 0.09) if pill.edge else 0
+        draw.rounded_rectangle((px0, py0, px0 + pw, py0 + ph), radius=ph / 2,
+                               fill=(*pill.fill, 255),
+                               outline=(*pill.edge, 255) if pill.edge else None,
+                               width=edge_w)
+        draw.text((px0 + pad_x - tb[0], py0 + (ph - text_h) / 2 - tb[1]), caption,
+                  font=cfont, fill=(*pill.text, 255))
+        caption_box = (round(px0 / s), round(py0 / s), round((px0 + pw) / s), round((py0 + ph) / s))
 
     layer = layer.resize(canvas.size, Image.LANCZOS)
     canvas.alpha_composite(layer)
     return TypesetResult(image=canvas.convert("RGB"), notes=notes,
-                         scrimmed=scrim, overflowed=not fit.fits)
+                         scrimmed=scrim, overflowed=not fit.fits,
+                         headline_box=headline_box, caption_box=caption_box)

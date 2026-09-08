@@ -121,6 +121,12 @@ ZONE_EDGE_THRESHOLD = 5.0
 NAVY = LOGO_PLATE_DARK
 CREAM = LOGO_PLATE_LIGHT
 WHITE = (255, 255, 255)
+PINK = (250, 53, 118)           # --dr-pink, the signature accent
+ORANGE = (255, 122, 0)          # the vivid orange of the house energy split
+# The caption pill's type: a fixed fraction of canvas height so its size is
+# known before the headline is fitted around it.
+CAPTION_FONT_FRACTION = 0.042
+CAPTION_FONT = FONTS_DIR / "Poppins-ExtraBold.ttf"
 
 # --- Output ratios ---------------------------------------------------------
 # (generation size, final size). Generation edges must be multiples of 16 for

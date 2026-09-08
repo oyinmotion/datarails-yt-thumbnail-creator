@@ -236,3 +236,50 @@ def test_real_faces_and_type_in_the_zone_read_as_busy_and_a_blurred_zone_does_no
     calm = ref.copy()
     calm.paste(ref.crop(box).filter(ImageFilter.GaussianBlur(30)), box[:2])
     assert not typeset.zone_is_busy(calm, box), "blurred to a gradient, it is calm"
+
+
+# --- caption pill --------------------------------------------------------------
+def test_every_style_has_a_pill_treatment():
+    from src.models import STYLE_BRIEF
+    assert set(typeset.PILL_TREATMENTS) == set(STYLE_BRIEF)
+
+
+def test_no_caption_means_no_pill_and_identical_output():
+    art = _flat_art()
+    a = typeset.typeset(art, "SAME AI", "house_energy", "split_screen", "16x9")
+    b = typeset.typeset(art, "SAME AI", "house_energy", "split_screen", "16x9", caption=None)
+    assert a.image.tobytes() == b.image.tobytes()
+    assert a.caption_box is None
+
+
+def test_caption_pill_sits_below_the_headline_inside_the_zone():
+    art = _flat_art(colour=(20, 30, 60))
+    r = typeset.typeset(art, "SAME AI", "house_energy", "split_screen", "16x9",
+                        caption="Who's right?")
+    assert r.caption_box is not None and r.headline_box is not None
+    zx0, zy0, zx1, zy1 = typeset.zone_box("split_screen", "16x9", art.size)
+    cx0, cy0, cx1, cy1 = r.caption_box
+    assert zx0 <= cx0 < cx1 <= zx1 and zy0 <= cy0 < cy1 <= zy1, "pill inside the zone"
+    assert cy0 >= r.headline_box[3], "pill below the headline block"
+    assert not r.overflowed, "headline still fits above the pill"
+    # House pill is cream: the pill region contains near-cream pixels.
+    region = r.image.crop(r.caption_box).convert("RGB")
+    assert any(px[0] > 240 and px[2] > 220 for px in region.get_flattened_data())
+
+
+def test_caption_pill_colours_follow_the_style():
+    art = _flat_art(colour=(240, 240, 240))
+    r = typeset.typeset(art, "SAME AI", "dark_cinematic", "split_screen", "16x9",
+                        caption="Who's right?")
+    region = r.image.crop(r.caption_box).convert("L")
+    assert min(region.get_flattened_data()) < 40, "dark cinematic pill is navy"
+
+
+def test_caption_on_the_tall_ratio_stays_inside_its_zone():
+    art = _flat_art("9x16")
+    r = typeset.typeset(art, "YOUR FORECAST IS WRONG", "flat_graphic", "text_dominant", "9x16",
+                        caption="Still sure?")
+    zx0, zy0, zx1, zy1 = typeset.zone_box("text_dominant", "9x16", art.size)
+    cx0, cy0, cx1, cy1 = r.caption_box
+    assert zy0 <= cy0 < cy1 <= zy1 and zx0 <= cx0 < cx1 <= zx1
+    assert not r.overflowed
