@@ -8,3 +8,6 @@ oauthlib>=3.3
 requests>=2.34
 pytest>=8.0
 extra-streamlit-components
+# ffmpeg + ffprobe via pip. Streamlit Cloud cannot apt-install them any more:
+# its image carries an expired Debian 11 security source (LTS ended Aug 2026).
+static-ffmpeg>=3.0

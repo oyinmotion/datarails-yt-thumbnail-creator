@@ -103,8 +103,11 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # then fill it in
 .venv/bin/streamlit run app.py
 ```
 
-Needs ffmpeg (`brew install ffmpeg`). On Streamlit Cloud it comes from
-`packages.txt`.
+Needs ffmpeg and ffprobe. Locally `brew install ffmpeg` is simplest; if they are
+not on PATH the app falls back to the `static-ffmpeg` pip package, which is also
+how Streamlit Cloud gets them. (There is deliberately no `packages.txt`: the
+Cloud image's apt sources include an expired Debian 11 feed, and any apt step
+fails before the app can start.)
 
 To test the pipeline without the UI or Drive — this is the cheapest way to check
 a prompt change:
@@ -135,7 +138,7 @@ nothing. APIs & Services → Library → enable **Google Drive API**.
 branch `master`, main file `app.py`. It is a private repo, so grant Streamlit
 read access to private repositories when it asks. Deploy. It will fail to start
 until step 4 — that is expected. Note the URL it gives you, e.g.
-`https://dr-yt-thumbnails.streamlit.app`.
+`https://dt-yt-thumbnail-creator.streamlit.app`.
 
 **3. Create the OAuth client.**
 OAuth consent screen → User type **Internal**. This matters: an Internal app may
