@@ -231,3 +231,12 @@ def test_a_full_plan_is_rejected_when_only_two_were_asked_for():
     plan = _plan()
     with pytest.raises(ValueError, match="expected exactly 2"):
         plan.validate_matrix(matrix_for(2))
+
+
+def test_clean_headline_text_normalises_and_enforces_the_word_cap():
+    from src.models import clean_headline_text
+    assert clean_headline_text("  same   ai. ") == "SAME AI"
+    with pytest.raises(ValueError):
+        clean_headline_text("one two three four five six")
+    with pytest.raises(ValueError):
+        clean_headline_text("   ")

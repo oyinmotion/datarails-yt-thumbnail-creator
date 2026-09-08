@@ -202,3 +202,13 @@ def test_style_briefs_no_longer_describe_type():
         assert "TYPE:" not in brief
     for brief in TREATMENT_BRIEF.values():
         assert "headline" not in brief.lower()
+
+
+def test_headline_prompt_names_the_hook_and_the_current_line():
+    text = prompts.headline_prompt(_variant(hook="pain", treatment="text_dominant", index=4),
+                                   ad_summary="two colleagues disagree",
+                                   current="SAME AI DIFFERENT ANSWER")
+    assert "pain" in text and "SAME AI DIFFERENT ANSWER" in text
+    assert "two colleagues disagree" in text
+    assert "three" in text.lower()
+    assert "{" not in text

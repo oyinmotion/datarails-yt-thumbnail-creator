@@ -116,3 +116,15 @@ def planner_prompt(
 
     # Frame filenames are appended by plan.py, which knows what it extracted.
     return "\n".join(parts)
+
+
+def headline_prompt(variant: Variant, ad_summary: str, current: str, n: int = 3) -> str:
+    """'More lines' for one concept: text only, the same headline rules."""
+    return (
+        load("headlines")
+        .replace("{ad_summary}", (ad_summary or "").strip() or "no summary available")
+        .replace("{hook_type}", variant.hook_type)
+        .replace("{row_intent}", ROW_INTENT.get(variant.index, ""))
+        .replace("{current}", current)
+        .replace("{n}", NUMBER_WORDS.get(n, str(n)))
+    )

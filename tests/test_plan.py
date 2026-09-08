@@ -256,3 +256,47 @@ def test_a_frame_that_will_not_open_is_still_sent_rather_than_dropped(frames):
     plan.build_plan(frames, None, client=client)
     content = client.responses.calls[0]["input"][0]["content"]
     assert len([c for c in content if c["type"] == "input_image"]) == len(frames)
+
+
+# --- headline suggestions -----------------------------------------------------
+from src.models import HeadlineOptions
+
+
+class FakeHeadlineResponses:
+    def __init__(self, headlines, fail=False):
+        self.parsed = HeadlineOptions(headlines=headlines)
+        self.fail = fail
+        self.calls = []
+
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("planner down")
+        return type("R", (), {"output_parsed": self.parsed})()
+
+
+def _headline_client(headlines, fail=False):
+    c = FakeClient()
+    c.responses = FakeHeadlineResponses(headlines, fail)
+    return c
+
+
+def test_suggest_headlines_returns_cleaned_valid_distinct_lines():
+    v = _valid_plan().variants[0]
+    got = plan.suggest_headlines(v, "x", "HOOK 1", client=_headline_client(
+        ["forecast is wrong", "HOOK 1", "same ai, two answers.",
+         "one two three four five six", "FORECAST IS WRONG"]))
+    assert got == ["FORECAST IS WRONG", "SAME AI, TWO ANSWERS"]
+
+
+def test_suggest_headlines_never_raises():
+    v = _valid_plan().variants[0]
+    assert plan.suggest_headlines(v, "x", "HOOK 1", client=_headline_client([], fail=True)) == []
+
+
+def test_suggest_headlines_sends_no_images():
+    v = _valid_plan().variants[0]
+    client = _headline_client(["A B"])
+    plan.suggest_headlines(v, "x", "HOOK 1", client=client)
+    content = client.responses.calls[0]["input"][0]["content"]
+    assert all(c["type"] == "input_text" for c in content)

@@ -144,6 +144,24 @@ def style_for(index: int) -> Style:
     raise ValueError(f"no style for slot {index}; valid slots are 1-{len(MATRIX)}")
 
 
+def clean_headline_text(text: str) -> str:
+    """One rule for every headline the tool accepts, planned or suggested."""
+    v = " ".join((text or "").split()).rstrip(".").strip().upper()
+    if not v:
+        raise ValueError("headline cannot be empty")
+    if len(v.split()) > MAX_HEADLINE_WORDS:
+        raise ValueError(
+            f"headline must be {MAX_HEADLINE_WORDS} words or fewer, got "
+            f"{len(v.split())}: {v!r}"
+        )
+    return v
+
+
+class HeadlineOptions(BaseModel):
+    """Structured output for 'more lines': the planner returns only headlines."""
+    headlines: list[str]
+
+
 class Variant(BaseModel):
     # No Field(ge=..., le=...) here, and no Field(min_length=...) on
     # BatchPlan.variants: both emit JSON Schema keywords (minimum/maximum,
@@ -168,15 +186,7 @@ class Variant(BaseModel):
     @field_validator("headline")
     @classmethod
     def clean_headline(cls, v: str) -> str:
-        v = " ".join(v.split()).rstrip(".").strip().upper()
-        if not v:
-            raise ValueError("headline cannot be empty")
-        if len(v.split()) > MAX_HEADLINE_WORDS:
-            raise ValueError(
-                f"headline must be {MAX_HEADLINE_WORDS} words or fewer, got "
-                f"{len(v.split())}: {v!r}"
-            )
-        return v
+        return clean_headline_text(v)
 
 
 class BatchPlan(BaseModel):
