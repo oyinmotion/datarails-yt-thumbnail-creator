@@ -8,9 +8,20 @@ same pixels. Nothing here calls an API.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 
-from .config import TEXT_BOTTOM_RESERVE
+from PIL import ImageFont
+
+from .config import (
+    HEADLINE_FALLBACK_FONT,
+    HEADLINE_FONT,
+    TEXT_BOTTOM_RESERVE,
+    TEXT_FLOOR_FRACTION,
+)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -86,3 +97,101 @@ def zone_instruction(treatment: str, ratio: str) -> str:
         "NO text of any kind anywhere in the image: no words, letters, numbers, "
         f"captions, watermarks or UI. Composition: {_ACTOR[treatment]}."
     )
+
+
+# --- fitting -----------------------------------------------------------------
+class TypesetError(RuntimeError):
+    """The headline could not be set at all (no usable font)."""
+
+
+@dataclass
+class Fit:
+    font: ImageFont.FreeTypeFont
+    lines: list[str]
+    size: int
+    fits: bool          # False when even the floor size overflows the box
+
+
+def load_font(size: int) -> ImageFont.FreeTypeFont:
+    """Poppins Black, else SemiBold, else a TypesetError naming both."""
+    for path in (HEADLINE_FONT, HEADLINE_FALLBACK_FONT):
+        try:
+            return ImageFont.truetype(str(path), size)
+        except OSError:
+            log.warning("font %s not loadable", path)
+    raise TypesetError(
+        f"No headline font could be loaded (tried {HEADLINE_FONT.name} and "
+        f"{HEADLINE_FALLBACK_FONT.name}); the fonts ship in assets/fonts/poppins."
+    )
+
+
+def floor_px(canvas_height: int) -> int:
+    return round(canvas_height * TEXT_FLOOR_FRACTION)
+
+
+def _cap_height(font: ImageFont.FreeTypeFont) -> int:
+    bbox = font.getbbox("H")
+    return bbox[3] - bbox[1]
+
+
+def _wrap(words: list[str], font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+    """Greedy fill: as many words per line as fit the width."""
+    lines: list[str] = []
+    current: list[str] = []
+    for word in words:
+        candidate = " ".join(current + [word])
+        if current and font.getlength(candidate) > max_width:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
+def _block_height(font: ImageFont.FreeTypeFont, n_lines: int) -> int:
+    cap = _cap_height(font)
+    leading = round(cap * 1.18)          # tight display leading
+    return cap + leading * (n_lines - 1)
+
+
+def _font_at(font_path: Path, size: int) -> ImageFont.FreeTypeFont:
+    # The configured headline face goes through the fallback chain; any other
+    # face a caller names explicitly is loaded as-is.
+    if Path(font_path) == HEADLINE_FONT:
+        return load_font(size)
+    return ImageFont.truetype(str(font_path), size)
+
+
+def fit_headline(
+    text: str, font_path: Path, box: tuple[int, int, int, int],
+    floor: int, max_lines: int = 3,
+) -> Fit:
+    """The largest size at which the headline fits `box` in <= max_lines.
+
+    Sizes step down by 4px from a generous start. If nothing fits at the floor,
+    return the floor-size fit with fits=False so the caller can flag the tile;
+    the text is still drawn — a flagged headline beats a missing one.
+    """
+    words = " ".join((text or "").upper().split()).split()
+    x0, y0, x1, y1 = box
+    max_w, max_h = x1 - x0, y1 - y0
+
+    def _fits(font: ImageFont.FreeTypeFont, lines: list[str]) -> bool:
+        return (len(lines) <= max_lines
+                and all(font.getlength(line) <= max_w for line in lines)
+                and _block_height(font, len(lines)) <= max_h)
+
+    # Start where a single line would fill the height; nothing can be bigger.
+    size = max(floor, max_h)
+    while size > floor:
+        font = _font_at(font_path, size)
+        lines = _wrap(words, font, max_w)
+        if _fits(font, lines):
+            return Fit(font=font, lines=lines, size=size, fits=True)
+        size -= 4
+
+    font = _font_at(font_path, floor)
+    lines = _wrap(words, font, max_w)
+    return Fit(font=font, lines=lines, size=floor, fits=_fits(font, lines))
