@@ -511,3 +511,86 @@ def test_a_render_that_never_answered_still_counts_its_attempts(
     # billed, so the money figure excludes them — see cost_line.
     assert outcome.render_calls == 30
     assert outcome.images_billed == 0
+
+
+# --- per-tile actions: retitle and reroll ------------------------------------
+def test_retitle_recomposes_every_ratio_for_free(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(1))
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    monkeypatch.setattr(typeset, "typeset", _REAL_TYPESET)   # so the re-set is visible
+    calls = {"n": 0}
+
+    def no_render(*a, **k):
+        calls["n"] += 1
+        raise AssertionError("retitle must not render")
+
+    monkeypatch.setattr(render, "render_art", no_render)
+    before = {r: outcome.results[0].paths[r].read_bytes() for r in outcome.results[0].paths}
+    new = pipeline.retitle(outcome.results[0], "new line here")
+    assert calls["n"] == 0, "no image call"
+    assert new.headline == "NEW LINE HERE"
+    assert set(new.paths) == {"16x9", "1x1", "9x16"}
+    for ratio, path in new.paths.items():
+        assert path.read_bytes() != before[ratio], f"{ratio} was re-set"
+    assert new.art_paths == outcome.results[0].art_paths, "the art is untouched"
+    assert not new.flagged
+
+
+def test_retitle_flags_a_headline_that_does_not_fit(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(1))
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    monkeypatch.setattr(typeset, "typeset", _REAL_TYPESET)
+    new = pipeline.retitle(outcome.results[0], "EXTRAORDINARILY LONG WORDS EVERYWHERE HERE")
+    assert new.flagged and "too long" in new.note
+
+
+def test_reroll_rerenders_all_three_ratios_and_bills_them(wired, tmp_path, monkeypatch):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    calls = {"n": 0}
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return _flat_png(k.get("ratio", "16x9"), (90, 20, 20))
+
+    monkeypatch.setattr(render, "render_art", counting)
+    before_calls, before_billed = outcome.render_calls, outcome.images_billed
+    new = pipeline.reroll(outcome.results[0], outcome)
+    assert calls["n"] == 3
+    assert outcome.render_calls == before_calls + 3
+    assert outcome.images_billed == before_billed + 3
+    assert new.headline == outcome.results[0].headline
+    assert new.style == outcome.results[0].style
+    assert new.variant.index == outcome.results[0].variant.index
+    assert all(p.exists() for p in new.paths.values())
+
+
+def test_reroll_with_a_style_swaps_the_look(wired, tmp_path, monkeypatch):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    seen = []
+
+    def capturing(*a, **k):
+        seen.append(k.get("style"))
+        return _flat_png(k.get("ratio", "16x9"))
+
+    monkeypatch.setattr(render, "render_art", capturing)
+    new = pipeline.reroll(outcome.results[0], outcome, style="dark_cinematic")
+    assert seen == ["dark_cinematic"] * 3
+    assert new.style == "dark_cinematic"
+    assert new.variant.style == "house_energy", "the matrix slot is unchanged; the row is off-matrix"
+
+
+def test_reroll_keeps_the_hard_contract_when_the_api_fails(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(1))
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert outcome.images_billed == 3
+
+    def fails(*a, **k):
+        raise render.RenderError("503")
+
+    monkeypatch.setattr(render, "render_art", fails)
+    new = pipeline.reroll(outcome.results[0], outcome)
+    assert new.variant.index == 1
+    assert all(new.paths.get(r) is None for r in ("16x9", "1x1", "9x16"))
+    assert "503" in new.note
+    assert outcome.images_billed == 3, "failed calls are not billed"
+    assert outcome.render_calls == 3 + 6, "two attempts per ratio were made"

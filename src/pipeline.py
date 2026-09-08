@@ -366,3 +366,61 @@ def generate_batch(
         images_billed=sum(o.billed for o in outcomes),
         frames=frames, people_in_ad=batch_plan.people_in_ad, work_dir=work_dir,
     )
+
+
+# --- per-tile actions -------------------------------------------------------
+def retitle(result: ThumbResult, headline: str) -> ThumbResult:
+    """Re-set the headline on every ratio's cached art. No API call.
+
+    Returns a new row; the caller swaps it in. Notes from typesetting (too long,
+    scrim) become the row's flag, replacing whatever the previous compose said.
+    """
+    new = ThumbResult(
+        variant=result.variant, art_paths=dict(result.art_paths), style=result.style,
+        headline=" ".join((headline or "").upper().split()),
+        unverified=result.unverified,
+        render_calls=result.render_calls, images_billed=result.images_billed,
+    )
+    notes: list[str] = []
+    for ratio, art_path in result.art_paths.items():
+        out_path = art_path.parent.parent / "out" / art_path.name
+        try:
+            path, tile_notes = compose(art_path, new.headline, new.style,
+                                       result.variant.treatment, ratio, out_path)
+            new.paths[ratio] = path
+            notes += [n if ratio == PRIMARY_RATIO else f"{ratio}: {n}" for n in tile_notes]
+        except Exception as exc:
+            log.warning("retitle failed for %s", art_path, exc_info=True)
+            notes.append(f"{ratio}: couldn't set the headline ({exc})")
+    new.flagged = bool(notes)
+    new.note = "; ".join(notes)
+    return new
+
+
+def reroll(
+    result: ThumbResult, outcome: BatchOutcome, client=None,
+    style: str | None = None, sleeper=None,
+) -> ThumbResult:
+    """Re-render one concept's art at every ratio; keep its headline.
+
+    `style` swaps the look (off-matrix, for this tile only). Adds the calls to
+    the outcome's running totals. Returns the new row; the caller swaps it in.
+    """
+    if outcome.work_dir is None:
+        raise RuntimeError("this batch did not record its work_dir")
+    art_dir = outcome.work_dir / "art"
+    out_dir = outcome.work_dir / "out"
+    ratios = list(RATIOS)
+    with ThreadPoolExecutor(max_workers=len(ratios)) as pool:
+        outcomes = list(pool.map(
+            lambda ratio: _one_render(
+                result.variant, ratio, outcome.frames, art_dir, out_dir, client,
+                sleeper=sleeper, people_in_ad=outcome.people_in_ad,
+                style=style or result.style, headline=result.headline,
+            ),
+            ratios,
+        ))
+    row = _group_by_variant(outcomes, [result.variant])[0]
+    outcome.render_calls += sum(o.attempts for o in outcomes)
+    outcome.images_billed += sum(o.billed for o in outcomes)
+    return row
