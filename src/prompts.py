@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from .config import PROMPTS_DIR
+from .config import PRIMARY_RATIO, PROMPTS_DIR
 from .models import (
     DEFAULT_VARIANTS,
     ROW_INTENT,
@@ -13,6 +13,7 @@ from .models import (
     Variant,
     matrix_for,
 )
+from .typeset import zone_instruction
 
 
 @lru_cache(maxsize=None)
@@ -39,13 +40,17 @@ a person out of a reference image.
 """
 
 
-def render_prompt(variant: Variant, people_in_ad: bool = True) -> str:
+def render_prompt(
+    variant: Variant, people_in_ad: bool = True,
+    style: str | None = None, ratio: str = PRIMARY_RATIO,
+) -> str:
+    """The art-only prompt. `style` overrides the slot's style (swap look)."""
     filled = (
         load("render")
-        .replace("{style_brief}", STYLE_BRIEF[variant.style])
+        .replace("{style_brief}", STYLE_BRIEF[style or variant.style])
         .replace("{treatment_brief}", TREATMENT_BRIEF[variant.treatment])
         .replace("{scene_direction}", variant.scene_direction)
-        .replace("{headline}", variant.headline)
+        .replace("{zone_instruction}", zone_instruction(variant.treatment, ratio))
     )
     if not people_in_ad:
         filled += NO_PEOPLE_RULE

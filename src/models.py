@@ -42,41 +42,36 @@ MATRIX: list[tuple[int, HookType, Treatment, Style]] = [
 TREATMENT_BRIEF: dict[str, str] = {
     "split_screen": (
         "Both actors face off, one on each side, a hard vertical seam of light "
-        "between them. Headline centered on the seam."
+        "between them."
     ),
     "face_closeup": (
-        "One actor's face fills roughly half the frame with a clear reaction. "
-        "Headline stacked in the remaining space."
+        "One actor's face fills roughly half the frame with a clear reaction."
     ),
     "full_bleed": (
-        "A single dramatic energy burst fills the frame behind both actors. "
-        "Headline centered and dominant."
+        "A single dramatic energy burst fills the frame behind both actors."
     ),
     "text_dominant": (
-        "Typography carries the frame and the headline is the loudest element, "
-        "set very large. The actor is offset to one side rather than centred — "
-        "but still close, still big enough that their face and expression read "
-        "clearly at thumbnail size. Type dominance means the words are bigger, "
-        "not that the person is small or turned away."
+        "The actor is offset to one side rather than centred — but still close, "
+        "still big enough that their face and expression read clearly at "
+        "thumbnail size."
     ),
     "product_forward": (
         "The FinanceOS product surface or its mark is visible and legible, with "
-        "one actor presenting it. Headline supports rather than competes."
+        "one actor presenting it."
     ),
 }
 
-# Each brief must fully specify palette, lighting, subject treatment AND type
-# treatment, because prompts/render.md no longer states any of them globally —
-# that global block was what made all five renders look identical.
+# Each brief specifies palette, lighting and subject treatment. Type is NOT
+# described here any more: the headline is set by src/typeset.py, whose
+# TYPE_TREATMENTS carry the per-style type rules. Describing type to a model
+# that must render none of it only invited stray lettering.
 STYLE_BRIEF: dict[str, str] = {
     "house_energy": (
         "The proven Datarails look. Extremely high contrast, built to stop a "
         "scroll. BACKGROUND: splits deep navy blue against vivid orange with hot "
         "white light where they meet, carrying embers, sparks or light rays, lit "
         "cinematically. SUBJECT: the cut-out people from the footage stand in "
-        "front of it with a subtle light rim separating them. TYPE: heavy "
-        "condensed sans, all caps, pure white with a thick dark outline and a "
-        "hard drop shadow."
+        "front of it with a subtle light rim separating them."
     ),
     "dark_cinematic": (
         "Restrained and expensive, like a prestige drama poster. BACKGROUND: "
@@ -85,9 +80,7 @@ STYLE_BRIEF: dict[str, str] = {
         "glow effects. A single orange accent at most. SUBJECT: the cut-out "
         "person from the footage, placed against that darkness with a faint warm "
         "rim light along one edge so they separate from it — their face stays "
-        "bright enough to read clearly and is NOT lost in shadow. TYPE: heavy "
-        "condensed sans, all caps, off-white, tight tracking, no outline — "
-        "separation comes from the darkness behind it."
+        "bright enough to read clearly and is NOT lost in shadow."
     ),
     "flat_graphic": (
         "A bold flat-colour treatment. BACKGROUND: two or three solid flat "
@@ -96,9 +89,7 @@ STYLE_BRIEF: dict[str, str] = {
         "scenery. SUBJECT: the cut-out person from the footage sits on those "
         "colour fields with a crisp offset shadow, kept LARGE in the frame with "
         "their expression fully readable — this is a thumbnail, not a minimal "
-        "print poster, so never shrink them or turn them away. TYPE: very large, "
-        "all caps, heavy grotesque, navy on the orange field or knocked out to "
-        "off-white, aligned hard to the layout."
+        "print poster, so never shrink them or turn them away."
     ),
     "clean_corporate": (
         "Calm software credibility, bright and modern. BACKGROUND: a clean, "
@@ -108,9 +99,7 @@ STYLE_BRIEF: dict[str, str] = {
         "contact shadow so they separate from it. They keep the clothing they "
         "are wearing in the footage — do not put them in different clothes, a "
         "different setting, an office, or at a desk, and do not replace them "
-        "with anyone else. TYPE: heavy sans, all caps, deep navy on the light "
-        "background, no outline and no shadow — contrast alone carries it. One "
-        "vivid orange accent at most."
+        "with anyone else. One vivid orange accent at most."
     ),
 }
 

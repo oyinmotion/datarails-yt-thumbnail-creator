@@ -1,56 +1,53 @@
-Create a YouTube ad thumbnail, 16:9, in the exact visual style of the reference
-images provided.
+Create the ARTWORK for a YouTube ad thumbnail in the exact visual style described
+below. You are producing the picture only. We add the headline ourselves
+afterwards, so this image must contain no text at all.
 
 ## Non-negotiable, whatever the style
 
-These override the style direction below in every case. If the style and these
-rules ever conflict, these win.
+These override the style direction below in every case.
 
 **The people are real and they are not yours to change.**
 
 - The reference images are frames from an actual filmed ad. The people in them
-  are real employees. They are the ONLY people who may appear in this thumbnail.
+  are real employees. They are the ONLY people who may appear in this image.
 - Never generate, substitute, replace or add a person. Not a similar-looking
-  person, not a better-looking person, not a more senior-looking person, not a
-  stock-photography professional. If the style suggests a different kind of
-  person would suit it better, ignore that — use these people.
-- Count the people in the reference frames. Your thumbnail may contain **only**
-  those people, and no more of them than the frames show. If the frames show one
-  person, do not add a second. If they show nobody, the thumbnail contains
-  nobody.
-- Any additional images you were given are there for VISUAL STYLE ONLY —
-  palette, lighting, type treatment, composition. If a person appears in one of
-  them, that person belongs to a different ad and is a stranger here. Never copy,
+  person, not a better-looking person, not a stock-photography professional.
+- Count the people in the reference frames. Your image may contain **only**
+  those people, and no more of them than the frames show. If they show nobody,
+  the image contains nobody.
+- Any additional images you were given are there for VISUAL STYLE ONLY. If a
+  person appears in one of them, that person is a stranger here. Never copy,
   trace or imitate a face from a style image.
 - Keep their face, age, skin tone, hair, facial hair, glasses and clothing
   exactly as they appear in the reference frames, including any logo or graphic
   printed on their clothing.
 - You are compositing, not re-photographing. Cut the person out of their
-  original footage and place them IN FRONT OF the style's background. You are
-  never producing a new photograph of a person in a room.
+  original footage and place them IN FRONT OF the style's background.
 
-**It has to work as a YouTube thumbnail, not as a poster or a slide.**
+**It has to work as a YouTube thumbnail.**
 
-- At least one face is large, clearly visible, and carries a readable emotion.
-  A thumbnail with no legible human expression does not earn a click.
-- That face is turned toward the viewer or close to it. Never a back of a head,
-  never a full profile staring out of frame, never a person so small or so far
-  away that their expression is lost.
-- The subject occupies a substantial part of the frame and separates hard from
-  the background. It must read instantly at 320 pixels wide.
-- Every word of the headline stays fully legible and fully inside the frame.
+- At least one face is large, clearly visible, and carries a readable emotion,
+  turned toward the viewer or close to it.
+- The subject separates hard from the background and reads instantly at 320
+  pixels wide.
 - No invented logos, no invented product names, no invented UI, no watermark,
-  no signature. If a product mark is not visible in the reference frames, do not
-  draw one.
+  no signature, no play button.
 
-## Visual style for this thumbnail
+**No text. None.** No words, letters, numbers, captions, labels, speech
+bubbles, watermarks or interface text anywhere in the image. Text printed on a
+person's own clothing in the reference frames is the single exception.
+
+## The reserved area
+
+{zone_instruction}
+
+## Visual style for this artwork
 
 {style_brief}
 
-Follow that style faithfully, including its palette, its lighting and its type
-treatment. Do not substitute a different look, and do not fall back on a
-high-contrast orange-and-blue energy treatment unless the style above asks for
-one.
+Follow that style faithfully, including its palette and lighting. Do not
+substitute a different look, and do not fall back on a high-contrast
+orange-and-blue energy treatment unless the style above asks for one.
 
 ## Layout
 
@@ -59,14 +56,3 @@ one.
 ## Scene direction
 
 {scene_direction}
-
-## The text
-
-Render exactly this headline, and nothing else:
-
-"{headline}"
-
-Spell it exactly as written, all capitals, every word legible and fully inside
-the frame. Do not add any other text, tagline, caption, watermark, signature,
-URL, or logo. Do not add a play button or any interface element. Do not letter
-the text across a person's face.

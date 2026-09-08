@@ -168,20 +168,17 @@ def test_style_is_not_a_model_field():
     assert "style" not in Variant.model_fields
 
 
-def test_each_style_brief_specifies_its_own_type_treatment():
-    """render.md no longer states type treatment globally, so every brief must.
-
-    Checks for type direction by any name — a brief may say "Headline in a heavy
-    condensed sans" or "Typography is the design"; both direct the type.
-    """
+def test_every_brief_specifies_background_and_subject_but_never_type():
+    """Type is set by src/typeset.py (TYPE_TREATMENTS), not drawn by the model.
+    A brief that described lettering invited stray text into the art."""
+    from src.models import STYLE_BRIEF
     for style, brief in STYLE_BRIEF.items():
-        lowered = brief.lower()
-        assert any(
-            word in lowered for word in ("headline", "typography", "type")
-        ), f"{style} brief must direct the type treatment"
-        assert any(
-            word in lowered for word in ("sans", "grotesque", "caps")
-        ), f"{style} brief must name a typeface character or case"
+        assert "BACKGROUND:" in brief, f"{style} brief must direct the background"
+        assert "SUBJECT:" in brief, f"{style} brief must direct the subject"
+        assert "TYPE:" not in brief, f"{style} brief must not describe type"
+        for word in ("sans", "grotesque", "typography", "lettering"):
+            assert word not in brief.lower(), f"{style} brief still describes type: {word!r}"
+
 
 
 def test_the_divergent_briefs_forbid_the_house_treatment():
