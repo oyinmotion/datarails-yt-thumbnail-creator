@@ -12,13 +12,19 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
+from . import branding
 from .config import (
+    CREAM,
     HEADLINE_FALLBACK_FONT,
     HEADLINE_FONT,
+    NAVY,
     TEXT_BOTTOM_RESERVE,
     TEXT_FLOOR_FRACTION,
+    TEXT_SUPERSAMPLE,
+    WHITE,
+    ZONE_EDGE_THRESHOLD,
 )
 
 log = logging.getLogger(__name__)
@@ -195,3 +201,123 @@ def fit_headline(
     font = _font_at(font_path, floor)
     lines = _wrap(words, font, max_w)
     return Fit(font=font, lines=lines, size=floor, fits=_fits(font, lines))
+
+
+# --- type treatments, scrim, typeset() ------------------------------------------
+@dataclass(frozen=True)
+class TypeTreatment:
+    """How a style sets its headline. Mirrors the retired TYPE clauses of STYLE_BRIEF."""
+    fill: tuple[int, int, int]
+    stroke: tuple[int, int, int] | None
+    stroke_frac: float                          # of font size
+    shadow: tuple[int, int, int, int] | None    # RGBA
+    shadow_frac: float                          # offset, of font size
+    adaptive: bool = False                      # flat_graphic: fill from the zone's luminance
+
+
+TYPE_TREATMENTS: dict[str, TypeTreatment] = {
+    "house_energy":    TypeTreatment(WHITE, NAVY, 0.07, (0, 0, 0, 166), 0.06),
+    "dark_cinematic":  TypeTreatment(CREAM, None, 0.0, None, 0.0),
+    "flat_graphic":    TypeTreatment(NAVY, None, 0.0, None, 0.0, adaptive=True),
+    "clean_corporate": TypeTreatment(NAVY, None, 0.0, None, 0.0),
+}
+
+
+@dataclass
+class TypesetResult:
+    image: Image.Image
+    notes: list[str]
+    scrimmed: bool = False
+    overflowed: bool = False
+
+
+def edge_energy(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    """Mean edge response over the region. Near zero for flat colour AND for
+    smooth gradients; high wherever there are faces, sparks, type or texture."""
+    region = image.convert("L").crop(box)
+    if not region.width or not region.height:
+        return float("inf")
+    return ImageStat.Stat(region.filter(ImageFilter.FIND_EDGES)).mean[0]
+
+
+def zone_is_busy(image: Image.Image, box: tuple[int, int, int, int]) -> bool:
+    """Did the model paint detail into the reserved zone?
+
+    Edge energy only. branding.busy_score adds luminance spread, which is right
+    for a logo corner but wrong here: a calm gradient has a large spread.
+    """
+    return edge_energy(image, box) > ZONE_EDGE_THRESHOLD
+
+
+def _draw_scrim(canvas: Image.Image, box: tuple[int, int, int, int], dark: bool) -> None:
+    """A soft plate under the type, in place. Dark under light type, light under dark."""
+    x0, y0, x1, y1 = box
+    pad = round((y1 - y0) * 0.08)
+    colour = (*NAVY, 150) if dark else (*CREAM, 170)
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(overlay).rounded_rectangle(
+        (max(0, x0 - pad), max(0, y0 - pad),
+         min(canvas.width, x1 + pad), min(canvas.height, y1 + pad)),
+        radius=max(8, pad), fill=colour,
+    )
+    canvas.alpha_composite(overlay)
+
+
+def typeset(
+    art: Image.Image, headline: str, style: str, treatment: str, ratio: str,
+    *, scrim: bool = False,
+) -> TypesetResult:
+    """Set `headline` into the zone on a copy of `art`, at the art's own size.
+
+    Text is drawn on a transparent layer at TEXT_SUPERSAMPLE x the art's size and
+    resampled down before compositing, so edges are anti-aliased. The art itself
+    is never resampled here — the single downscale to delivery size happens
+    later, in postprocess.finalize_image().
+    """
+    canvas = art.convert("RGBA")
+    box = zone_box(treatment, ratio, canvas.size)
+    zone = zone_for(treatment, ratio)
+    look = TYPE_TREATMENTS[style]
+    notes: list[str] = []
+
+    fill = look.fill
+    if look.adaptive:
+        fill = NAVY if branding.region_is_light(canvas, box) else CREAM
+
+    if scrim:
+        dark_type = sum(fill) < 384
+        _draw_scrim(canvas, box, dark=not dark_type)
+        notes.append("set over a scrim — art ignored the text zone")
+
+    fit = fit_headline(headline, HEADLINE_FONT, box, floor=floor_px(canvas.height))
+    if not fit.fits:
+        notes.append("headline too long for this layout")
+
+    s = TEXT_SUPERSAMPLE
+    layer = Image.new("RGBA", (canvas.width * s, canvas.height * s), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    font = load_font(fit.size * s)
+    cap = _cap_height(font)
+    leading = round(cap * 1.18)
+    stroke_w = round(fit.size * s * look.stroke_frac) if look.stroke else 0
+    shadow_d = round(fit.size * s * look.shadow_frac) if look.shadow else 0
+    top_offset = font.getbbox("H")[1]       # keeps the cap where we measured it
+
+    bx0, by0, bx1, by1 = (v * s for v in box)
+    block_h = cap + leading * (len(fit.lines) - 1)
+    y = by0 + max(0, ((by1 - by0) - block_h) // 2)
+    for line in fit.lines:
+        w = font.getlength(line)
+        x = bx0 if zone.align == "left" else bx0 + ((bx1 - bx0) - w) / 2
+        if look.shadow:
+            draw.text((x + shadow_d, y - top_offset + shadow_d), line, font=font,
+                      fill=look.shadow, stroke_width=stroke_w, stroke_fill=look.shadow)
+        draw.text((x, y - top_offset), line, font=font, fill=(*fill, 255),
+                  stroke_width=stroke_w,
+                  stroke_fill=(*look.stroke, 255) if look.stroke else None)
+        y += leading
+
+    layer = layer.resize(canvas.size, Image.LANCZOS)
+    canvas.alpha_composite(layer)
+    return TypesetResult(image=canvas.convert("RGB"), notes=notes,
+                         scrimmed=scrim, overflowed=not fit.fits)

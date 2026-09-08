@@ -112,8 +112,11 @@ TEXT_BOTTOM_RESERVE = 0.14
 # Text is drawn at this multiple of the art's size and composited down, so the
 # edges are anti-aliased rather than stepped.
 TEXT_SUPERSAMPLE = 2
-# branding.busy_score above this means the model painted into the reserved zone.
-ZONE_BUSY_THRESHOLD = 22.0
+# Edge energy (mean of FIND_EDGES over the zone) above this means the model painted
+# detail into the reserved zone. Luminance spread is deliberately NOT used: a
+# smooth navy-to-orange gradient — exactly what a calm zone looks like — has a
+# spread of 13-47 but edge energy under 2, while faces and type score 12+.
+ZONE_EDGE_THRESHOLD = 5.0
 # Brand colours used by the type treatments (same values as the logo plates).
 NAVY = LOGO_PLATE_DARK
 CREAM = LOGO_PLATE_LIGHT

@@ -156,8 +156,8 @@ def test_typeset_draws_the_headline_inside_the_zone_and_nowhere_else():
     box = typeset.zone_box("split_screen", "16x9", art.size)
     inside = out.crop(box).convert("L")
     outside = out.crop((0, box[3] + 5, out.width, out.height)).convert("L")
-    assert max(inside.getdata()) > 240, "white type appears in the zone"
-    assert max(outside.getdata()) < 120, "nothing is drawn below the zone"
+    assert max(inside.get_flattened_data()) > 240, "white type appears in the zone"
+    assert max(outside.get_flattened_data()) < 120, "nothing is drawn below the zone"
     assert result.notes == [] and not result.scrimmed and not result.overflowed
 
 
@@ -168,7 +168,7 @@ def test_text_edges_are_antialiased_not_stepped():
     art = _flat_art(colour=(0, 0, 0))
     out = typeset.typeset(art, "SAME AI", "dark_cinematic", "full_bleed", "16x9").image
     box = typeset.zone_box("full_bleed", "16x9", art.size)
-    levels = set(out.crop(box).convert("L").getdata())
+    levels = set(out.crop(box).convert("L").get_flattened_data())
     assert len(levels) > 24, f"only {len(levels)} grey levels: edges look stepped"
 
 
@@ -178,8 +178,8 @@ def test_flat_graphic_picks_navy_on_light_and_cream_on_dark():
     dark = typeset.typeset(_flat_art(colour=(10, 10, 30)), "SAME AI",
                            "flat_graphic", "text_dominant", "16x9").image
     box = typeset.zone_box("text_dominant", "16x9", light.size)
-    assert min(light.crop(box).convert("L").getdata()) < 60, "navy type on a light field"
-    assert max(dark.crop(box).convert("L").getdata()) > 220, "cream type on a dark field"
+    assert min(light.crop(box).convert("L").get_flattened_data()) < 60, "navy type on a light field"
+    assert max(dark.crop(box).convert("L").get_flattened_data()) > 220, "cream type on a dark field"
 
 
 def test_zone_is_busy_detects_art_painted_into_the_zone():
@@ -212,3 +212,27 @@ def test_typeset_never_mutates_the_art_it_is_given():
     before = art.tobytes()
     typeset.typeset(art, "SAME AI", "house_energy", "split_screen", "16x9")
     assert art.tobytes() == before
+
+
+def test_a_smooth_gradient_is_a_calm_zone_not_a_busy_one():
+    """Regression: the first cut used branding.busy_score, whose luminance spread
+    flagged every gradient as busy. A calm zone in real art IS a gradient."""
+    size = RATIOS["16x9"][0]
+    box = typeset.zone_box("split_screen", "16x9", size)
+    gradient = Image.linear_gradient("L").resize(size).convert("RGB")
+    assert not typeset.zone_is_busy(gradient, box)
+
+
+REF = Path(__file__).resolve().parent.parent / "refs" / "style" / "Claude-Vs-ClaudeFOS1.png"
+
+
+@pytest.mark.skipif(not REF.exists(), reason="reference thumbnail not present")
+def test_real_faces_and_type_in_the_zone_read_as_busy_and_a_blurred_zone_does_not():
+    from PIL import ImageFilter
+    size = RATIOS["16x9"][0]
+    box = typeset.zone_box("split_screen", "16x9", size)
+    ref = Image.open(REF).convert("RGB").resize(size, Image.LANCZOS)
+    assert typeset.zone_is_busy(ref, box), "the reference has type and faces in that zone"
+    calm = ref.copy()
+    calm.paste(ref.crop(box).filter(ImageFilter.GaussianBlur(30)), box[:2])
+    assert not typeset.zone_is_busy(calm, box), "blurred to a gradient, it is calm"
