@@ -471,3 +471,49 @@ def test_one_concept_still_produces_a_row(wired, tmp_path, monkeypatch):
     )
     assert len(outcome.results) == 1
     assert outcome.results[0].path is not None
+
+
+# --- one wave, and what it cost -------------------------------------------
+def test_a_full_batch_renders_in_a_single_wave():
+    """Five concepts x three ratios is fifteen renders. With fewer workers than
+    that the batch is two waves, and the second wave only starts when the
+    slowest render of the first is done — the single biggest chunk of wall
+    clock a user waits through."""
+    from src.config import RATIOS
+    assert pipeline.MAX_WORKERS >= len(MATRIX) * len(RATIOS)
+
+
+def test_a_clean_batch_reports_fifteen_renders_and_no_rerolls(wired, tmp_path):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert outcome.render_calls == 15
+    assert outcome.rerolls == 0
+
+
+def test_rerolls_are_counted_so_the_real_cost_can_be_shown(
+    wired, tmp_path, monkeypatch
+):
+    """The pre-run caption estimates one render per image. Rerolls make the
+    real bill higher, and until now invisibly so."""
+    monkeypatch.setattr(
+        qa, "check",
+        lambda path, headline, **k: QAResult(
+            ok=False, problems=["the headline isn't readable"],
+        ),
+    )
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert outcome.render_calls == 30
+    assert outcome.rerolls == 15
+
+
+def test_a_render_that_never_answered_still_counts_its_attempts(
+    wired, tmp_path, monkeypatch
+):
+    def always_fails(*args, **kwargs):
+        raise render.RenderError("503 from the API")
+
+    monkeypatch.setattr(render, "render_variant", always_fails)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    # Two attempts per job, none produced an image. Failed calls are not
+    # billed, so the money figure excludes them — see cost_line.
+    assert outcome.render_calls == 30
+    assert outcome.images_billed == 0

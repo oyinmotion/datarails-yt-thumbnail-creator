@@ -16,8 +16,9 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from src import auth, drive, session as dr_session
+from src.config import IMAGE_COST_USD
 from src.models import DEFAULT_VARIANTS, MAX_VARIANTS, MIN_VARIANTS
-from src.pipeline import ThumbResult, generate_batch
+from src.pipeline import BatchOutcome, ThumbResult, generate_batch
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,21 @@ def ad_display_name(video_name: str) -> str:
             break
     cleaned = " ".join(stem.replace("_", " ").replace("-", " ").split())
     return cleaned or "this ad"
+
+
+def cost_line(outcome: BatchOutcome, planned_images: int) -> str:
+    """What the batch actually cost, against what the caption promised.
+
+    The pre-run caption assumes one image call per image. Rerolls (a QA retry,
+    a blocked render tried again on another frame) add calls, and only calls
+    that returned an image are billed. Say so, in one line.
+    """
+    billed = outcome.images_billed
+    rerolls = max(0, outcome.render_calls - planned_images)
+    line = f"Actual: {billed} images billed ≈ **${billed * IMAGE_COST_USD:.2f}**"
+    if rerolls:
+        line += f" — {rerolls} re-roll{'s' if rerolls != 1 else ''} on top of the {planned_images} planned"
+    return line
 
 
 def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
@@ -387,7 +403,7 @@ def main() -> None:
     st.caption(
         f"{variant_count} concept{'s' if variant_count != 1 else ''} × 3 sizes = "
         f"**{variant_count * 3} images**, roughly "
-        f"**${variant_count * 3 * 0.2:.2f}**"
+        f"**${variant_count * 3 * IMAGE_COST_USD:.2f}**"
     )
 
     with st.expander("Advanced"):
@@ -483,6 +499,7 @@ def main() -> None:
         for warning in outcome.warnings:
             st.warning(warning)
         st.caption(f"**What the ad is about:** {outcome.plan.ad_summary}")
+        st.caption(cost_line(outcome, planned_images=len(outcome.results) * 3))
         st.caption(
             "Every concept is rendered in **three sizes** — switch tabs to see "
             "the square and vertical versions."

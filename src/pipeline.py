@@ -21,9 +21,12 @@ from .models import DEFAULT_VARIANTS, BatchPlan, Variant
 
 log = logging.getLogger(__name__)
 
-# Five variants times three ratios is fifteen renders per batch, so the pool
-# is wider than the old one-render-per-variant shape.
-MAX_WORKERS = 8
+# Five variants times three ratios is fifteen renders per batch. The pool is at
+# least that wide so a full batch is ONE wave: with eight workers the second
+# wave could not start until the slowest render of the first had finished,
+# which was the single biggest chunk of wall clock a user sat through. Rate
+# limits are handled by the staggered per-concept backoff, not by queueing.
+MAX_WORKERS = 15
 
 # Module-level so tests can swap in a no-op and stay instant.
 DEFAULT_SLEEPER = time.sleep
@@ -38,6 +41,11 @@ class RenderOutcome:
     flagged: bool = False
     note: str = ""
     unverified: bool = False
+    # How many image calls this tile made, and how many of those returned an
+    # image (and so were billed). A reroll is a second call; a 5xx is a call
+    # that was not billed.
+    attempts: int = 0
+    billed: int = 0
 
 
 @dataclass
@@ -62,6 +70,15 @@ class BatchOutcome:
     plan: BatchPlan
     results: list[ThumbResult]
     warnings: list[str] = field(default_factory=list)
+    # What the batch actually cost in image calls. The pre-run caption assumes
+    # one call per image; rerolls push the real number above that.
+    planned_renders: int = 0
+    render_calls: int = 0
+    images_billed: int = 0
+
+    @property
+    def rerolls(self) -> int:
+        return max(0, self.render_calls - self.planned_renders)
 
 
 def _slug(variant: Variant) -> str:
@@ -99,10 +116,17 @@ def _one_render(
     extra_instruction = ""
     frame_override: Path | None = None
     last_note = ""
+    attempts = 0
+    billed = 0
+
+    def _done(**kw) -> RenderOutcome:
+        return RenderOutcome(variant=variant, ratio=ratio, attempts=attempts,
+                             billed=billed, **kw)
 
     try:
         for attempt in (1, 2):
             try:
+                attempts += 1
                 raw = render.render_variant(
                     variant, frames, client=client,
                     extra_instruction=extra_instruction,
@@ -110,6 +134,7 @@ def _one_render(
                     people_in_ad=people_in_ad,
                     gen_size=gen_size,
                 )
+                billed += 1
             except render.RenderBlocked as exc:
                 last_note = f"blocked by content filter: {exc}"
                 frame_override = _other_frame(frames, variant.frame_id)
@@ -138,10 +163,7 @@ def _one_render(
                 # The logo is composited here, after verification: stamping
                 # before the legibility read could hide warped type behind it.
                 path = branding.stamp_logo(path)
-                return RenderOutcome(
-                    variant=variant, ratio=ratio, path=path,
-                    unverified=result.unverified,
-                )
+                return _done(path=path, unverified=result.unverified)
 
             last_note = "; ".join(result.problems)
             if attempt == 1:
@@ -170,23 +192,17 @@ def _one_render(
 
             # Second failure: still hand it over, flagged. The user decides.
             path = branding.stamp_logo(path)
-            return RenderOutcome(
-                variant=variant, ratio=ratio, path=path, flagged=True,
-                note=f"text may be unreadable — {last_note}",
-            )
+            return _done(path=path, flagged=True,
+                         note=f"text may be unreadable — {last_note}")
     except Exception as exc:
         # Anything unforeseen — a malformed payload, a PIL failure, a bug —
         # costs exactly one tile instead of the whole batch.
         log.warning("variant %s failed unexpectedly", variant.index,
                     exc_info=True)
-        return RenderOutcome(
-            variant=variant, ratio=ratio, path=None, flagged=True,
-            note=f"something went wrong rendering this one ({exc})",
-        )
+        return _done(path=None, flagged=True,
+                     note=f"something went wrong rendering this one ({exc})")
 
-    return RenderOutcome(
-        variant=variant, ratio=ratio, path=None, flagged=True, note=last_note
-    )
+    return _done(path=None, flagged=True, note=last_note)
 
 
 def _group_by_variant(
@@ -284,4 +300,9 @@ def generate_batch(
         )
 
     say("Done.")
-    return BatchOutcome(plan=batch_plan, results=results, warnings=warnings)
+    return BatchOutcome(
+        plan=batch_plan, results=results, warnings=warnings,
+        planned_renders=len(jobs),
+        render_calls=sum(o.attempts for o in outcomes),
+        images_billed=sum(o.billed for o in outcomes),
+    )

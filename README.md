@@ -89,7 +89,9 @@ withheld, because those references are finished thumbnails of a different ad and
 the model will otherwise lift an actor out of them.
 
 Roughly $0.60 per concept — three renders each — so about $3 for a full batch
-of five, or $1.20 for two.
+of five, or $1.20 for two. That is the estimate; the results show the actual
+number of images billed, including any re-rolls, so the real spend is never a
+surprise. All fifteen renders of a full batch run concurrently, in one wave.
 
 Five is the ceiling because every row is a distinct hook, layout and look;
 a sixth would have to repeat a pairing and would give you two near-identical

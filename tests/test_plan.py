@@ -215,3 +215,44 @@ def test_the_final_attempt_does_not_sleep_pointlessly(frames):
         plan.build_plan(frames, None, client=FakeClient(fail_times=2),
                         sleeper=delays.append)
     assert len(delays) == 1        # after attempt 1 only
+
+
+# --- planner frame size ------------------------------------------------------
+def test_frames_are_downscaled_for_the_planner_only(tmp_path):
+    """The planner reads composition and expression, not pixels: 1280px frames
+    cost roughly twice the image tokens of 768px ones for no better plan. The
+    render still gets the full-size frames — this touches the planner payload
+    only, and the filenames the planner picks from must not change."""
+    import base64, io
+    from PIL import Image
+    from src.config import PLANNER_FRAME_WIDTH
+
+    big = []
+    for i in range(2):
+        p = tmp_path / f"scene_{i:03d}.jpg"
+        Image.new("RGB", (1280, 720), (i * 40, 90, 120)).save(p, "JPEG")
+        big.append(p)
+
+    client = FakeClient()
+    plan.build_plan(big, None, client=client)
+    content = client.responses.calls[0]["input"][0]["content"]
+    images = [c for c in content if c["type"] == "input_image"]
+    assert len(images) == 2
+    for item in images:
+        header, encoded = item["image_url"].split(",", 1)
+        with Image.open(io.BytesIO(base64.b64decode(encoded))) as im:
+            assert im.width == PLANNER_FRAME_WIDTH
+            assert im.width < 1280
+    # The prompt still names the original files, so frame_id resolves unchanged.
+    text = content[0]["text"]
+    assert "scene_000.jpg" in text and "scene_001.jpg" in text
+
+
+def test_a_frame_that_will_not_open_is_still_sent_rather_than_dropped(frames):
+    """The fixture frames are not real JPEGs. Downscaling must fall back to the
+    bytes as they are — losing a frame would silently narrow the planner's
+    choices, and this path is also what the existing tests exercise."""
+    client = FakeClient()
+    plan.build_plan(frames, None, client=client)
+    content = client.responses.calls[0]["input"][0]["content"]
+    assert len([c for c in content if c["type"] == "input_image"]) == len(frames)

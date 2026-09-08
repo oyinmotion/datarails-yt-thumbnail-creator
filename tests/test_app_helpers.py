@@ -202,3 +202,30 @@ def test_allowlist_is_empty_rather_than_fatal_without_a_secrets_file(monkeypatch
     _no_secrets_file(monkeypatch)
     monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
     assert app._allowlist() == set()
+
+
+# --- cost readout -----------------------------------------------------------
+def test_cost_line_names_rerolls_and_uses_the_shared_price():
+    from src.config import IMAGE_COST_USD
+    from src.pipeline import BatchOutcome
+    from src.models import BatchPlan
+    outcome = BatchOutcome(
+        plan=BatchPlan(ad_summary="x", transcript_used=True, variants=[]),
+        results=[], render_calls=17, images_billed=17,
+    )
+    line = app.cost_line(outcome, planned_images=15)
+    assert "17" in line
+    assert "2 re-roll" in line
+    assert f"${17 * IMAGE_COST_USD:.2f}" in line
+
+
+def test_cost_line_is_quiet_about_rerolls_when_there_were_none():
+    from src.pipeline import BatchOutcome
+    from src.models import BatchPlan
+    outcome = BatchOutcome(
+        plan=BatchPlan(ad_summary="x", transcript_used=True, variants=[]),
+        results=[], render_calls=15, images_billed=15,
+    )
+    line = app.cost_line(outcome, planned_images=15)
+    assert "re-roll" not in line
+    assert "15" in line
