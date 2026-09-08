@@ -1,7 +1,12 @@
 """Orchestration. Knows the order of operations and nothing about the UI.
 
-The hard contract: the caller always receives exactly five result rows. A failed
-render is a row with path=None and a readable note, never a missing tile.
+Two artifacts per tile per ratio: the ART (text-free, from the model, cached at
+generation size under work_dir/art) and the FINAL (headline set by typeset.py,
+logo stamped, downscaled once, under work_dir/out).
+
+The hard contract: the caller always receives exactly one result row per
+planned concept. A failed render is a row with path=None and a readable note,
+never a missing tile.
 """
 
 from __future__ import annotations
@@ -13,9 +18,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from PIL import Image
+
 from . import backoff
 from . import plan as plan_module
-from . import branding, postprocess, probe, qa, render
+from . import branding, postprocess, probe, qa, render, typeset
 from .config import PRIMARY_RATIO, RATIOS
 from .models import DEFAULT_VARIANTS, BatchPlan, Variant
 
@@ -31,6 +38,12 @@ MAX_WORKERS = 15
 # Module-level so tests can swap in a no-op and stay instant.
 DEFAULT_SLEEPER = time.sleep
 
+ZONE_REROLL_INSTRUCTION = (
+    "The previous attempt painted detail into the reserved area. Keep that area "
+    "completely calm — flat colour or a soft gradient only — and move every "
+    "person, object, spark and light effect out of it."
+)
+
 
 @dataclass
 class RenderOutcome:
@@ -38,6 +51,9 @@ class RenderOutcome:
     variant: Variant
     ratio: str
     path: Path | None
+    art_path: Path | None = None
+    style: str = ""
+    headline: str = ""
     flagged: bool = False
     note: str = ""
     unverified: bool = False
@@ -53,11 +69,16 @@ class ThumbResult:
     """One concept, rendered at every ratio."""
     variant: Variant
     paths: dict[str, Path] = field(default_factory=dict)
+    art_paths: dict[str, Path] = field(default_factory=dict)
+    style: str = ""              # current look; differs from variant.style after swap
+    headline: str = ""           # current headline; differs from the plan after an edit
     flagged: bool = False
     note: str = ""
-    # True when a render was handed over without the legibility model ever
+    # True when a render was handed over without the likeness model ever
     # reading it back — see QAResult.unverified.
     unverified: bool = False
+    render_calls: int = 0
+    images_billed: int = 0
 
     @property
     def path(self) -> Path | None:
@@ -75,6 +96,10 @@ class BatchOutcome:
     planned_renders: int = 0
     render_calls: int = 0
     images_billed: int = 0
+    # What per-tile actions need later in the session.
+    frames: dict[str, Path] = field(default_factory=dict)
+    people_in_ad: bool = True
+    work_dir: Path | None = None
 
     @property
     def rerolls(self) -> int:
@@ -92,25 +117,44 @@ def _other_frame(frames: dict[str, Path], used: str) -> Path | None:
     return None
 
 
+def compose(
+    art_path: Path, headline: str, style: str, treatment: str, ratio: str,
+    out_path: Path, scrim: bool = False,
+) -> tuple[Path, list[str]]:
+    """Art on disk → delivered thumbnail on disk. Pure Pillow, ~100ms.
+
+    typeset (native size) → logo → ONE downscale → size/2MB guard.
+    """
+    with Image.open(art_path) as opened:
+        art = opened.convert("RGB")
+    set_ = typeset.typeset(art, headline, style, treatment, ratio, scrim=scrim)
+    branded = branding.stamp_logo_image(set_.image)
+    written = postprocess.finalize_image(branded, out_path, final_size=RATIOS[ratio][1])
+    return written, list(set_.notes)
+
+
 def _one_render(
     variant: Variant,
     ratio: str,
     frames: dict[str, Path],
+    art_dir: Path,
     out_dir: Path,
     client,
     sleeper=None,
     people_in_ad: bool = True,
+    style: str | None = None,
+    headline: str | None = None,
 ) -> RenderOutcome:
-    """Render, finalize, verify. One reroll on failure, then flag and move on.
+    """Render art, gate it, compose. One reroll at most, then flag and move on.
 
-    Every failure mode is contained here. The five variants run in a thread
-    pool, and `pool.map` re-raises the first exception it sees — which would
-    lose all five rows over one bad response — so nothing may escape.
+    Every failure mode is contained here. The tiles run in a thread pool, and
+    `pool.map` re-raises the first exception it sees — which would lose every
+    row over one bad response — so nothing may escape.
     """
     sleeper = sleeper or DEFAULT_SLEEPER
-    (gen_w, gen_h), final_size = RATIOS[ratio]
-    gen_size = f"{gen_w}x{gen_h}"
-    # Deterministic per-variant offset: without it all five variants wake from
+    style = style or variant.style
+    headline = headline or variant.headline
+    # Deterministic per-variant offset: without it all variants wake from
     # backoff at the same instant and re-collide with the same rate limit.
     offset = variant.index * backoff.STAGGER
     extra_instruction = ""
@@ -118,21 +162,25 @@ def _one_render(
     last_note = ""
     attempts = 0
     billed = 0
+    art_path = art_dir / f"{_slug(variant)}_{ratio}.png"
+    out_path = out_dir / f"{_slug(variant)}_{ratio}.png"
 
     def _done(**kw) -> RenderOutcome:
-        return RenderOutcome(variant=variant, ratio=ratio, attempts=attempts,
-                             billed=billed, **kw)
+        return RenderOutcome(variant=variant, ratio=ratio, style=style, headline=headline,
+                             attempts=attempts, billed=billed, **kw)
 
     try:
+        zone_busy = False
+        gate = qa.QAResult(ok=True)
         for attempt in (1, 2):
             try:
                 attempts += 1
-                raw = render.render_variant(
+                raw = render.render_art(
                     variant, frames, client=client,
                     extra_instruction=extra_instruction,
                     frame_override=frame_override,
                     people_in_ad=people_in_ad,
-                    gen_size=gen_size,
+                    style=style, ratio=ratio,
                 )
                 billed += 1
             except render.RenderBlocked as exc:
@@ -147,27 +195,31 @@ def _one_render(
                     backoff.wait(attempt, sleeper=sleeper, offset=offset)
                 continue
 
-            path = postprocess.finalize(
-                raw, out_dir / f"{_slug(variant)}_{ratio}.png",
-                final_size=final_size,
-            )
+            art_dir.mkdir(parents=True, exist_ok=True)
+            art_path.write_bytes(raw)
+
             # The likeness gate compares against the frame this render was
             # actually built from, which is the override after a blocked reroll.
             source_frame = frame_override or frames.get(variant.frame_id)
-            result = qa.check(
-                path, variant.headline,
-                reference_frame=source_frame, client=client,
-                people_in_ad=people_in_ad, expected_size=final_size,
-            )
-            if result.ok:
-                # The logo is composited here, after verification: stamping
-                # before the legibility read could hide warped type behind it.
-                path = branding.stamp_logo(path)
-                return _done(path=path, unverified=result.unverified)
+            gate = qa.likeness_gate(art_path, source_frame, client=client,
+                                    people_in_ad=people_in_ad)
+            with Image.open(art_path) as art:
+                zone_busy = typeset.zone_is_busy(
+                    art.convert("RGB"), typeset.zone_box(variant.treatment, ratio, art.size))
 
-            last_note = "; ".join(result.problems)
+            if gate.ok and not zone_busy:
+                path, notes = compose(art_path, headline, style, variant.treatment,
+                                      ratio, out_path)
+                return _done(path=path, art_path=art_path, unverified=gate.unverified,
+                             flagged=bool(notes), note="; ".join(notes))
+
+            problems = list(gate.problems)
+            if zone_busy:
+                problems.append("art painted into the text zone")
+            last_note = "; ".join(problems)
+
             if attempt == 1:
-                if result.likeness in ("DIFFERENT", "NOBODY"):
+                if not gate.ok and gate.likeness in ("DIFFERENT", "NOBODY"):
                     extra_instruction = (
                         f"The previous attempt failed verification: {last_note}. "
                         "You generated a person who is not in the reference "
@@ -177,29 +229,28 @@ def _one_render(
                         "age, hair, facial hair and clothing identical, with "
                         "their face large and clearly visible."
                     )
+                    if zone_busy:
+                        extra_instruction += " " + ZONE_REROLL_INSTRUCTION
                 else:
-                    extra_instruction = (
-                        f"The previous attempt failed verification: {last_note}. "
-                        "Render the headline larger, fully inside the frame, "
-                        "with more space around it, and make every word "
-                        "unmistakably legible."
-                    )
-                # No backoff here: the API answered fine, the type was just
-                # illegible. Backoff exists for rate limits and transport
-                # failures, and making the user wait for a taste reroll is
-                # pure cost.
+                    extra_instruction = ZONE_REROLL_INSTRUCTION
+                # No backoff: the API answered fine. Backoff exists for rate
+                # limits and transport failures, not for a taste reroll.
                 continue
 
-            # Second failure: still hand it over, flagged. The user decides.
-            path = branding.stamp_logo(path)
-            return _done(path=path, flagged=True,
-                         note=f"text may be unreadable — {last_note}")
+            # Second failure: still hand it over, flagged. A zone that is still
+            # busy gets a scrim under the type so the headline stays legible.
+            path, notes = compose(art_path, headline, style, variant.treatment,
+                                  ratio, out_path, scrim=zone_busy)
+            return _done(path=path, art_path=art_path, flagged=True,
+                         note="; ".join([last_note] + notes),
+                         unverified=gate.unverified)
     except Exception as exc:
         # Anything unforeseen — a malformed payload, a PIL failure, a bug —
         # costs exactly one tile instead of the whole batch.
-        log.warning("variant %s failed unexpectedly", variant.index,
+        log.warning("variant %s/%s failed unexpectedly", variant.index, ratio,
                     exc_info=True)
-        return _done(path=None, flagged=True,
+        return _done(path=None, art_path=art_path if art_path.exists() else None,
+                     flagged=True,
                      note=f"something went wrong rendering this one ({exc})")
 
     return _done(path=None, flagged=True, note=last_note)
@@ -218,8 +269,14 @@ def _group_by_variant(
     }
     for outcome in outcomes:
         row = by_index[outcome.variant.index]
+        row.style = outcome.style
+        row.headline = outcome.headline
+        row.render_calls += outcome.attempts
+        row.images_billed += outcome.billed
         if outcome.path is not None:
             row.paths[outcome.ratio] = outcome.path
+        if outcome.art_path is not None:
+            row.art_paths[outcome.ratio] = outcome.art_path
         if outcome.flagged:
             row.flagged = True
         if outcome.unverified:
@@ -247,7 +304,9 @@ def generate_batch(
 
     work_dir = Path(work_dir)
     frames_dir = work_dir / "frames"
+    art_dir = work_dir / "art"
     out_dir = work_dir / "out"
+    art_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
 
@@ -284,7 +343,7 @@ def generate_batch(
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         outcomes = list(pool.map(
             lambda job: _one_render(
-                job[0], job[1], frames, out_dir, client, sleeper=sleeper,
+                job[0], job[1], frames, art_dir, out_dir, client, sleeper=sleeper,
                 people_in_ad=batch_plan.people_in_ad,
             ),
             jobs,
@@ -296,7 +355,7 @@ def generate_batch(
     if unverified:
         warnings.append(
             f"{unverified} of {len(results)} thumbnails could not be "
-            "text-checked — verify the headlines yourself."
+            "checked for the actor's likeness — look at the faces yourself."
         )
 
     say("Done.")
@@ -305,4 +364,5 @@ def generate_batch(
         planned_renders=len(jobs),
         render_calls=sum(o.attempts for o in outcomes),
         images_billed=sum(o.billed for o in outcomes),
+        frames=frames, people_in_ad=batch_plan.people_in_ad, work_dir=work_dir,
     )

@@ -4,9 +4,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src import backoff, branding, pipeline, postprocess, probe, qa, render
+from src import backoff, branding, pipeline, postprocess, probe, qa, render, typeset
 from src import plan as plan_module
-from src.config import FINAL_H, FINAL_W, GEN_SIZE
+from src.config import FINAL_H, FINAL_W, GEN_SIZE, RATIOS
+
+_REAL_TYPESET = typeset.typeset
+_REAL_STAMP = branding.stamp_logo_image
 from src.models import MATRIX, BatchPlan, Variant
 from src.qa import QAResult
 
@@ -26,13 +29,25 @@ def _plan():
     )
 
 
+def _flat_png(ratio="16x9", colour=(30, 60, 120)) -> bytes:
+    """Real PNG bytes at the ratio's generation size, so finalize runs for real."""
+    buf = io.BytesIO()
+    Image.new("RGB", RATIOS[ratio][0], colour).save(buf, "PNG")
+    return buf.getvalue()
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
-    """Replace every external dependency with a deterministic fake."""
+    """Replace every external dependency with a deterministic fake.
+
+    typeset and the logo stamp are swapped for fast identities here — fifteen
+    real 2048px typesets per test would make the suite crawl. The integration
+    test below and the zone test restore the real ones.
+    """
     frames = []
     for name in ("scene_001.jpg", "scene_002.jpg"):
         frame = tmp_path / name
-        frame.write_bytes(b"\xff\xd8\xff fake")
+        Image.new("RGB", (1280, 720), (60, 60, 60)).save(frame, "JPEG")
         frames.append(frame)
     audio = tmp_path / "audio.m4a"
     audio.write_bytes(b"fake")
@@ -40,30 +55,23 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(probe, "extract_frames",
                         lambda video, out_dir, max_frames=16: frames)
     monkeypatch.setattr(probe, "extract_audio", lambda video, out_dir: audio)
-    monkeypatch.setattr(plan_module, "build_plan",
-                        lambda *a, **k: _plan())
-    monkeypatch.setattr(render, "render_variant",
-                        lambda *a, **k: b"\x89PNG bytes")
-
-    written = []
-
-    def fake_finalize(image_bytes, out_path, final_size=None):
-        Path(out_path).write_bytes(image_bytes)
-        written.append(Path(out_path))
-        return Path(out_path)
-
-    monkeypatch.setattr(postprocess, "finalize", fake_finalize)
-    # The stub files above are not real images, so the real logo stamp cannot
-    # open them. Branding has its own tests in tests/test_branding.py.
-    monkeypatch.setattr(branding, "stamp_logo", lambda path, out=None: path)
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan())
+    monkeypatch.setattr(render, "render_art",
+                        lambda *a, **k: _flat_png(k.get("ratio", "16x9")))
     monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(ok=True, transcribed=headline),
+        qa, "likeness_gate",
+        lambda path, frame, **k: QAResult(ok=True, likeness="SAME", checked=True),
     )
+    monkeypatch.setattr(
+        typeset, "typeset",
+        lambda art, headline, style, treatment, ratio, scrim=False:
+            typeset.TypesetResult(image=art, notes=[], scrimmed=scrim),
+    )
+    monkeypatch.setattr(branding, "stamp_logo_image", lambda img: img)
     # Backoff is real in production and instant in tests.
     monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", lambda seconds: None)
     monkeypatch.setattr(plan_module, "DEFAULT_SLEEPER", lambda seconds: None)
-    return written
+    return frames
 
 
 def test_batch_returns_exactly_five_results(wired, tmp_path):
@@ -86,18 +94,19 @@ def test_output_filenames_are_ordered_and_descriptive(wired, tmp_path):
     assert names[4].startswith("05_outcome_product_forward")
 
 
-def test_failed_qa_triggers_exactly_one_reroll(wired, tmp_path, monkeypatch):
+def test_a_failed_likeness_triggers_exactly_one_reroll(wired, tmp_path, monkeypatch):
     calls = {"render": 0}
 
     def counting_render(*args, **kwargs):
         calls["render"] += 1
-        return b"\x89PNG bytes"
+        return _flat_png(kwargs.get("ratio", "16x9"))
 
-    monkeypatch.setattr(render, "render_variant", counting_render)
+    monkeypatch.setattr(render, "render_art", counting_render)
     monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(
-            ok=False, problems=["the headline isn't readable"],
+        qa, "likeness_gate",
+        lambda path, frame, **k: QAResult(
+            ok=False, problems=["the person in this thumbnail is not the actor from the ad"],
+            likeness="DIFFERENT", checked=True,
         ),
     )
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
@@ -108,32 +117,13 @@ def test_failed_qa_triggers_exactly_one_reroll(wired, tmp_path, monkeypatch):
     assert all(r.path is not None for r in outcome.results)
 
 
-def test_reroll_passes_the_failure_reason_back_into_the_prompt(
-    wired, tmp_path, monkeypatch
-):
-    seen = []
-
-    def capturing_render(variant, frames, client=None, extra_instruction="",
-                         frame_override=None, **kwargs):
-        seen.append(extra_instruction)
-        return b"\x89PNG bytes"
-
-    monkeypatch.setattr(render, "render_variant", capturing_render)
-    monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(ok=False, problems=["cut off"]),
-    )
-    pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
-    assert any("cut off" in s for s in seen if s)
-
-
 def test_a_render_that_always_fails_still_yields_a_result_row(
     wired, tmp_path, monkeypatch
 ):
     def always_fails(*args, **kwargs):
         raise render.RenderError("503 from the API")
 
-    monkeypatch.setattr(render, "render_variant", always_fails)
+    monkeypatch.setattr(render, "render_art", always_fails)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert len(outcome.results) == 5
     assert all(r.path is None for r in outcome.results)
@@ -149,12 +139,12 @@ def test_blocked_render_retries_with_a_different_frame(
                         frame_override=None, **kwargs):
         # Keyed on the argument, not a call counter: five variants render
         # concurrently, so a counter would be racy.
-        attempts.append(((variant.index, kwargs.get("gen_size")), frame_override))
+        attempts.append(((variant.index, kwargs.get("ratio")), frame_override))
         if frame_override is None:
             raise render.RenderBlocked("filter refused")
-        return b"\x89PNG bytes"
+        return _flat_png(kwargs.get("ratio", "16x9"))
 
-    monkeypatch.setattr(render, "render_variant", blocked_then_ok)
+    monkeypatch.setattr(render, "render_art", blocked_then_ok)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert len(outcome.results) == 5
     assert all(r.path is not None for r in outcome.results)
@@ -213,9 +203,9 @@ def test_one_variant_blowing_up_unexpectedly_costs_only_that_tile(
                                   **kwargs):
         if variant.index == 3:
             raise TypeError("'NoneType' object is not subscriptable")
-        return b"\x89PNG bytes"
+        return _flat_png(kwargs.get("ratio", "16x9"))
 
-    monkeypatch.setattr(render, "render_variant", explode_for_variant_three)
+    monkeypatch.setattr(render, "render_art", explode_for_variant_three)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
 
     assert len(outcome.results) == 5
@@ -229,16 +219,14 @@ def test_one_variant_blowing_up_unexpectedly_costs_only_that_tile(
 def test_an_unexpected_failure_in_finalize_also_costs_only_one_tile(
     wired, tmp_path, monkeypatch
 ):
-    calls = {"n": 0}
-    real_fake = postprocess.finalize
+    real = postprocess.finalize_image
 
-    def sometimes_broken(image_bytes, out_path, final_size=None, **kwargs):
+    def sometimes_broken(image, out_path, final_size=None, **kwargs):
         if "03_" in Path(out_path).name:
             raise OSError("cannot identify image file")
-        calls["n"] += 1
-        return real_fake(image_bytes, out_path, final_size)
+        return real(image, out_path, final_size or (FINAL_W, FINAL_H))
 
-    monkeypatch.setattr(postprocess, "finalize", sometimes_broken)
+    monkeypatch.setattr(postprocess, "finalize_image", sometimes_broken)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert len(outcome.results) == 5
     assert sum(1 for r in outcome.results if r.path is None) == 1
@@ -251,7 +239,7 @@ def test_a_failed_render_backs_off_before_the_reroll(wired, tmp_path, monkeypatc
     def always_fails(*args, **kwargs):
         raise render.RenderError("429 rate limit")
 
-    monkeypatch.setattr(render, "render_variant", always_fails)
+    monkeypatch.setattr(render, "render_art", always_fails)
     pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
 
     # One backoff per render, so fifteen. The stagger is per CONCEPT, so the
@@ -273,97 +261,104 @@ def test_backoff_grows_between_attempts():
     assert backoff.delay_for(2) > backoff.delay_for(1)
 
 
-def test_a_qa_reroll_does_not_make_the_user_wait(wired, tmp_path, monkeypatch):
-    """Backoff is for rate limits, not for an illegible headline."""
-    delays = []
-    monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", delays.append)
-    monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(
-            ok=False, problems=["the headline isn't readable"],
-        ),
-    )
-    pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
-    assert delays == []
-
-
 def test_an_unverified_batch_warns_the_user(wired, tmp_path, monkeypatch):
     """A QA outage fails open, which must never be silent."""
     monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(ok=True, transcribed=None),
+        qa, "likeness_gate", lambda path, frame, **k: QAResult(ok=True, checked=False),
     )
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert all(r.unverified for r in outcome.results)
-    assert any("could not be text-checked" in w for w in outcome.warnings)
+    assert any("could not be checked" in w and "likeness" in w for w in outcome.warnings)
     assert any("5 of 5" in w for w in outcome.warnings)
 
 
 def test_a_verified_batch_does_not_warn(wired, tmp_path):
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
-    assert not any("text-checked" in w for w in outcome.warnings)
+    assert not any("could not be checked" in w for w in outcome.warnings)
 
 
-# --- T11: the real finalize feeding the real hard checks --------------------
-def _real_render_bytes() -> bytes:
-    """A genuine PNG at the size gpt-image-2 is actually asked for."""
-    width, height = (int(v) for v in GEN_SIZE.split("x"))
-    image = Image.new("RGB", (width, height), (12, 24, 48))
-    buffer = io.BytesIO()
-    image.save(buffer, "PNG")
-    return buffer.getvalue()
-
-
-class FakeVision:
-    """Only the vision call is stubbed. It reads back every headline in the
-    batch, so each variant's own words appear in order."""
-
-    class responses:
-        @staticmethod
-        def create(**kwargs):
-            return type("R", (), {"output_text": "HOOK 1 2 3 4 5"})()
-
-
-def test_a_real_2048x1152_render_survives_finalize_and_hard_checks(
-    tmp_path, monkeypatch
-):
-    """The one integration the suite used to fake on both sides. If finalize
-    ever stopped downscaling, hard_checks would flag all five tiles and nobody
-    would know until a live run."""
+# --- the real typeset, logo and single downscale, end to end -----------------
+def test_a_real_2048x1152_art_becomes_a_1920x1080_thumbnail_with_the_headline(tmp_path, monkeypatch):
+    """The integration the suite must never fake on both sides: real typeset,
+    real logo stamp, real single downscale, real hard checks."""
     frames = []
     for name in ("scene_001.jpg", "scene_002.jpg"):
         frame = tmp_path / name
-        frame.write_bytes(b"\xff\xd8\xff fake")
+        Image.new("RGB", (1280, 720), (60, 60, 60)).save(frame, "JPEG")
         frames.append(frame)
     audio = tmp_path / "audio.m4a"
     audio.write_bytes(b"fake")
-
-    monkeypatch.setattr(probe, "extract_frames",
-                        lambda video, out_dir, max_frames=16: frames)
+    monkeypatch.setattr(probe, "extract_frames", lambda video, out_dir, max_frames=16: frames)
     monkeypatch.setattr(probe, "extract_audio", lambda video, out_dir: audio)
     monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan())
-    monkeypatch.setattr(render, "render_variant",
-                        lambda *a, **k: _real_render_bytes())
+    # Mid-grey art: light type (house, cinematic, flat) reads above it and dark
+    # type (clean corporate's navy) reads below it, so one assertion covers all.
+    monkeypatch.setattr(render, "render_art",
+                        lambda *a, **k: _flat_png(k.get("ratio", "16x9"), (110, 110, 110)))
+    monkeypatch.setattr(qa, "likeness_gate",
+                        lambda path, frame, **k: QAResult(ok=True, likeness="SAME", checked=True))
     monkeypatch.setattr(pipeline, "DEFAULT_SLEEPER", lambda seconds: None)
-    # postprocess.finalize and qa.check are the REAL ones here.
+    # typeset, stamp_logo_image and finalize_image are the REAL ones here.
 
-    outcome = pipeline.generate_batch(
-        tmp_path / "ad.mp4", tmp_path / "work", client=FakeVision(),
-    )
-
-    assert len(outcome.results) == 5
-    assert all(r.path is not None for r in outcome.results), [
-        r.note for r in outcome.results
-    ]
-    assert not any(r.flagged for r in outcome.results), [
-        r.note for r in outcome.results
-    ]
-    assert not any(r.unverified for r in outcome.results)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
 
     for result in outcome.results:
+        assert result.path is not None and not result.flagged, result.note
         assert qa.hard_checks(result.path) == []
         with Image.open(result.path) as im:
             assert im.size == (FINAL_W, FINAL_H)
+            box = typeset.zone_box(result.variant.treatment, "16x9", im.size)
+            levels = im.crop(box).convert("L").get_flattened_data()
+            assert max(levels) > 200 or min(levels) < 40, (
+                f"no type in the zone for {result.variant.treatment}/{result.style}")
+        with Image.open(result.art_paths["16x9"]) as art:
+            assert art.size == (2048, 1152), "art is cached at generation size"
+
+
+def test_the_legibility_model_is_never_called(wired, tmp_path):
+    assert not hasattr(qa, "check")
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert all(not r.unverified for r in outcome.results)
+
+
+def test_every_result_records_its_headline_and_style(wired, tmp_path):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    for r in outcome.results:
+        assert r.headline == r.variant.headline
+        assert r.style == r.variant.style
+        assert set(r.art_paths) == set(r.paths) == {"16x9", "1x1", "9x16"}
+
+
+def test_the_outcome_carries_what_reroll_needs(wired, tmp_path):
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
+    assert set(outcome.frames) == {"scene_001.jpg", "scene_002.jpg"}
+    assert outcome.people_in_ad is True
+    assert outcome.work_dir == tmp_path / "work"
+
+
+def test_art_painted_into_the_zone_is_rerolled_once_then_scrimmed(wired, tmp_path, monkeypatch):
+    monkeypatch.setattr(typeset, "typeset", _REAL_TYPESET)      # the scrim note comes from here
+    monkeypatch.setattr(plan_module, "build_plan", lambda *a, **k: _plan_of(1))
+
+    def noisy(*args, **kwargs):
+        w, h = RATIOS[kwargs.get("ratio", "16x9")][0]
+        buf = io.BytesIO()
+        Image.effect_noise((w, h), 80).convert("RGB").save(buf, "PNG")
+        return buf.getvalue()
+
+    seen = []
+
+    def capturing(*args, **kwargs):
+        seen.append(kwargs.get("extra_instruction", ""))
+        return noisy(**kwargs)
+
+    monkeypatch.setattr(render, "render_art", capturing)
+    outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work", variant_count=1)
+    assert outcome.render_calls == 6, "one reroll per ratio"
+    assert any("reserved" in s for s in seen if s)
+    r = outcome.results[0]
+    assert r.flagged and "scrim" in r.note
+    assert all(p is not None for p in r.paths.values())
 
 
 def test_an_invented_person_triggers_a_reroll_with_likeness_advice(
@@ -375,15 +370,15 @@ def test_an_invented_person_triggers_a_reroll_with_likeness_advice(
     def capturing_render(variant, frames, client=None, extra_instruction="",
                          frame_override=None, **kwargs):
         instructions.append(extra_instruction)
-        return b"\x89PNG bytes"
+        return _flat_png(kwargs.get("ratio", "16x9"))
 
-    monkeypatch.setattr(render, "render_variant", capturing_render)
+    monkeypatch.setattr(render, "render_art", capturing_render)
     monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, reference_frame=None, **k: QAResult(
+        qa, "likeness_gate",
+        lambda path, frame, **k: QAResult(
             ok=False,
             problems=["the person in this thumbnail is not the actor from the ad"],
-            likeness="DIFFERENT",
+            likeness="DIFFERENT", checked=True,
         ),
     )
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
@@ -401,11 +396,11 @@ def test_the_likeness_gate_receives_the_frame_the_render_used(
 ):
     seen = []
 
-    def capturing_check(path, headline, reference_frame=None, **kwargs):
+    def capturing_gate(path, reference_frame, **kwargs):
         seen.append(reference_frame)
-        return QAResult(ok=True, transcribed=headline, likeness="SAME")
+        return QAResult(ok=True, likeness="SAME", checked=True)
 
-    monkeypatch.setattr(qa, "check", capturing_check)
+    monkeypatch.setattr(qa, "likeness_gate", capturing_gate)
     pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     # Three ratios per concept now.
     assert len(seen) == 15
@@ -439,9 +434,9 @@ def test_asking_for_two_concepts_renders_two_rows_and_six_images(
 
     def counting(*args, **kwargs):
         calls["n"] += 1
-        return b"\x89PNG bytes"
+        return _flat_png(kwargs.get("ratio", "16x9"))
 
-    monkeypatch.setattr(render, "render_variant", counting)
+    monkeypatch.setattr(render, "render_art", counting)
     outcome = pipeline.generate_batch(
         tmp_path / "ad.mp4", tmp_path / "work", variant_count=2,
     )
@@ -495,10 +490,9 @@ def test_rerolls_are_counted_so_the_real_cost_can_be_shown(
     """The pre-run caption estimates one render per image. Rerolls make the
     real bill higher, and until now invisibly so."""
     monkeypatch.setattr(
-        qa, "check",
-        lambda path, headline, **k: QAResult(
-            ok=False, problems=["the headline isn't readable"],
-        ),
+        qa, "likeness_gate",
+        lambda path, frame, **k: QAResult(ok=False, problems=["not the actor"],
+                                          likeness="DIFFERENT", checked=True),
     )
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     assert outcome.render_calls == 30
@@ -511,7 +505,7 @@ def test_a_render_that_never_answered_still_counts_its_attempts(
     def always_fails(*args, **kwargs):
         raise render.RenderError("503 from the API")
 
-    monkeypatch.setattr(render, "render_variant", always_fails)
+    monkeypatch.setattr(render, "render_art", always_fails)
     outcome = pipeline.generate_batch(tmp_path / "ad.mp4", tmp_path / "work")
     # Two attempts per job, none produced an image. Failed calls are not
     # billed, so the money figure excludes them — see cost_line.
