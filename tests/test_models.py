@@ -260,3 +260,14 @@ def test_a_variant_may_carry_an_optional_caption():
     assert Variant(**base, caption="   ").caption is None, "blank means none"
     with pytest.raises(Exception):
         Variant(**base, caption="far too many words here")
+
+
+def test_the_house_brief_names_the_sticker_outline_and_the_seam_from_the_refs():
+    """The approved thumbnails cut the people out with a thick solid WHITE
+    outline — not a subtle rim — and burst rays from a lightning seam. The brief
+    must describe the look that was actually approved."""
+    from src.models import STYLE_BRIEF
+    brief = STYLE_BRIEF["house_energy"].lower()
+    assert "white" in brief and "outline" in brief and "sticker" in brief
+    assert "subtle light rim" not in brief
+    assert "rays" in brief and "lightning" in brief

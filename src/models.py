@@ -68,10 +68,14 @@ TREATMENT_BRIEF: dict[str, str] = {
 STYLE_BRIEF: dict[str, str] = {
     "house_energy": (
         "The proven Datarails look. Extremely high contrast, built to stop a "
-        "scroll. BACKGROUND: splits deep navy blue against vivid orange with hot "
-        "white light where they meet, carrying embers, sparks or light rays, lit "
-        "cinematically. SUBJECT: the cut-out people from the footage stand in "
-        "front of it with a subtle light rim separating them."
+        "scroll. BACKGROUND: splits deep navy blue against vivid orange along a "
+        "jagged, hot-white lightning seam, with radial light rays bursting "
+        "outward from the centre of that seam and a scatter of embers and "
+        "sparks, lit cinematically. SUBJECT: the cut-out people from the "
+        "footage stand in front of it, each with a thick, clean, solid WHITE "
+        "sticker outline following their whole silhouette — the cut-out reads "
+        "like a die-cut sticker placed on the background, not a photo blended "
+        "into it."
     ),
     "dark_cinematic": (
         "Restrained and expensive, like a prestige drama poster. BACKGROUND: "
