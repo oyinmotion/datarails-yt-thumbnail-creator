@@ -1,0 +1,15 @@
+# Direct dependencies, loose. This file is for humans and for deliberate upgrades:
+#   pip install -r requirements.in && pip freeze > requirements.txt   (then run the tests)
+# Streamlit Cloud installs requirements.txt, which pins every package exactly.
+streamlit>=1.58
+openai>=2.0
+pydantic>=2.9
+pillow>=11.0
+google-api-python-client>=2.140
+google-auth-oauthlib>=1.2
+oauthlib>=3.3
+requests>=2.34
+pytest>=8.0
+extra-streamlit-components
+# ffmpeg + ffprobe via pip: Streamlit Cloud's image can no longer apt-install them.
+static-ffmpeg>=3.0

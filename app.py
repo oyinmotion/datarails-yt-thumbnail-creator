@@ -13,8 +13,9 @@ from pathlib import Path
 
 import extra_streamlit_components as stx
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
-from src import auth, drive, refs, session as dr_session
+from src import auth, drive, session as dr_session
 from src.models import DEFAULT_VARIANTS, MAX_VARIANTS, MIN_VARIANTS
 from src.pipeline import ThumbResult, generate_batch
 
@@ -128,14 +129,29 @@ def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
 
 
 # --- secrets ---------------------------------------------------------------
+def _read_secret(name: str) -> str:
+    """st.secrets first, then the environment. Never raises for a missing file.
+
+    When there is no secrets file at all — a local run without one, or a Cloud
+    app whose secrets manager is empty — st.secrets.get() does not return its
+    default: Streamlit raises from inside the lookup. On the Cloud that raise
+    was the bare "Oh no" crash screen, with the real message ("add X in the
+    secrets manager") never reached. Treat "no file" as "no value" instead.
+    """
+    try:
+        value = st.secrets.get(name, "")
+    except StreamlitSecretNotFoundError:
+        value = ""
+    return value or os.environ.get(name, "")
+
+
 def _allowlist() -> set[str]:
     """Optional ALLOWED_EMAILS secret. Absent means every @datarails.com account."""
-    raw = st.secrets.get("ALLOWED_EMAILS", os.environ.get("ALLOWED_EMAILS", ""))
-    return auth.parse_allowlist(raw)
+    return auth.parse_allowlist(_read_secret("ALLOWED_EMAILS"))
 
 
 def _secret(name: str) -> str:
-    value = st.secrets.get(name, os.environ.get(name, ""))
+    value = _read_secret(name)
     if not value:
         st.error(
             f"`{name}` isn't configured. Add it in Streamlit's secrets manager."
@@ -209,9 +225,7 @@ def _signing_secret() -> str:
     falling back means persistence works with no extra configuration, and the
     fallback is already a server-side secret of the same sensitivity.
     """
-    return st.secrets.get(
-        "SESSION_SECRET", os.environ.get("SESSION_SECRET", "")
-    ) or _secret("GOOGLE_CLIENT_SECRET")
+    return _read_secret("SESSION_SECRET") or _secret("GOOGLE_CLIENT_SECRET")
 
 
 @st.cache_resource(show_spinner=False)
@@ -507,21 +521,6 @@ def main() -> None:
                                   else "image/jpeg"),
                             key=f"dl_{result.variant.index}_{ratio}",
                         )
-                        if st.button(
-                            "⭐ Save as reference",
-                            key=f"ref_{result.variant.index}_{ratio}",
-                        ):
-                            refs.save_winner(
-                                path,
-                                result.variant.style,
-                                result.variant.treatment,
-                            )
-                            # Deliberately says nothing about the filesystem:
-                            # how long it lasts is a maintenance detail, and the
-                            # caveat lives in the README.
-                            st.success(
-                                "Saved — this look will guide future batches."
-                            )
 
         successful = [r for r in outcome.results if r.path]
         if successful:

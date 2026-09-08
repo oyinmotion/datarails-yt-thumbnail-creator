@@ -1,3 +1,4 @@
+import pytest
 import io
 import zipfile
 from pathlib import Path
@@ -155,3 +156,49 @@ def test_the_name_never_comes_back_blank():
     """A header that says "Thumbnails for" and nothing else looks broken."""
     for odd in ("_vid_only.mp4", "___.mp4", ".mp4"):
         assert app.ad_display_name(odd).strip()
+
+
+# --- secrets --------------------------------------------------------------
+# With no secrets file anywhere, st.secrets.get() does not return its default:
+# Streamlit raises StreamlitSecretNotFoundError from inside the lookup. On the
+# Cloud that turned a missing secret into the bare "Oh no" crash screen instead
+# of the message that says which key to add. These pin the graceful path.
+
+class _Stop(Exception):
+    """Stands in for st.stop(), which raises internally to end the script."""
+
+
+def _no_secrets_file(monkeypatch):
+    from streamlit.errors import StreamlitSecretNotFoundError
+
+    class Secrets:
+        def get(self, key, default=None):
+            raise StreamlitSecretNotFoundError("No secrets found.")
+
+    shown: list[str] = []
+    monkeypatch.setattr(app.st, "secrets", Secrets())
+    monkeypatch.setattr(app.st, "error", lambda msg: shown.append(str(msg)))
+    monkeypatch.setattr(app.st, "stop", lambda: (_ for _ in ()).throw(_Stop()))
+    return shown
+
+
+def test_missing_secrets_file_shows_which_key_to_add(monkeypatch):
+    shown = _no_secrets_file(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(_Stop):
+        app._secret("OPENAI_API_KEY")
+    assert shown and "OPENAI_API_KEY" in shown[0]
+    assert "secrets manager" in shown[0]
+
+
+def test_missing_secrets_file_still_honours_the_environment(monkeypatch):
+    shown = _no_secrets_file(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    assert app._secret("OPENAI_API_KEY") == "sk-from-env"
+    assert shown == []
+
+
+def test_allowlist_is_empty_rather_than_fatal_without_a_secrets_file(monkeypatch):
+    _no_secrets_file(monkeypatch)
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    assert app._allowlist() == set()
