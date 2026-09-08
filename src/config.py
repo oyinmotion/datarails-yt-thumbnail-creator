@@ -31,12 +31,20 @@ FINAL_H = 1080
 MAX_BYTES = 2 * 1024 * 1024        # YouTube thumbnail cap
 JPEG_FALLBACK_QUALITY = 92
 IMAGE_QUALITY = "high"
+# Per-image price at IMAGE_QUALITY, used for both the pre-run estimate and the
+# post-run actual. Only calls that returned an image are billed; a 5xx is not.
+IMAGE_COST_USD = 0.20
 
 # --- Frame extraction ------------------------------------------------------
 MAX_FRAMES = 16
 SCENE_THRESHOLD = 0.3
 MIN_SCENE_FRAMES = 6               # below this, fall back to interval sampling
 FRAME_WIDTH = 1280
+# What the PLANNER sees. It reads composition and expression, not pixels, and
+# image tokens scale with area: 1280px frames cost roughly twice the tokens of
+# 768px ones for no better plan. The render still receives the full FRAME_WIDTH
+# frames as references, and filenames are unchanged so frame_id resolves.
+PLANNER_FRAME_WIDTH = 768
 
 # --- Input limits ----------------------------------------------------------
 # The container this runs in has a few GB of disk and has to hold the download,

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import time
 from pathlib import Path
 
+from PIL import Image
 from pydantic import ValidationError
 
 from . import backoff
-from .config import PLANNER_MODEL, TRANSCRIBE_MODEL
+from .config import PLANNER_FRAME_WIDTH, PLANNER_MODEL, TRANSCRIBE_MODEL
 from .models import DEFAULT_VARIANTS, MAX_HEADLINE_WORDS, BatchPlan, matrix_for
 from .openai_client import get_client
 from .prompts import planner_prompt
@@ -39,8 +41,26 @@ def _violations(exc: ValidationError) -> str:
     return "; ".join(parts) or str(exc)
 
 
-def _data_url(image: Path) -> str:
-    encoded = base64.b64encode(Path(image).read_bytes()).decode()
+def _data_url(image: Path, width: int = PLANNER_FRAME_WIDTH) -> str:
+    """The frame as a data URL, downscaled to `width` for the planner.
+
+    Falls back to the original bytes if the file will not open as an image:
+    dropping a frame would silently narrow the planner's choices, and a frame
+    that is not an image is a bug better surfaced by the model than hidden.
+    """
+    raw = Path(image).read_bytes()
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            if im.width > width:
+                im = im.resize(
+                    (width, round(im.height * width / im.width)), Image.LANCZOS
+                )
+            buffer = io.BytesIO()
+            im.convert("RGB").save(buffer, "JPEG", quality=85)
+            raw = buffer.getvalue()
+    except Exception:
+        log.debug("could not downscale %s for the planner; sending as-is", image)
+    encoded = base64.b64encode(raw).decode()
     return f"data:image/jpeg;base64,{encoded}"
 
 
