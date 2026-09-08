@@ -16,9 +16,10 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
 from src import auth, drive, session as dr_session
+from src import plan as plan_module
 from src.config import IMAGE_COST_USD
-from src.models import DEFAULT_VARIANTS, MAX_VARIANTS, MIN_VARIANTS
-from src.pipeline import BatchOutcome, ThumbResult, generate_batch
+from src.models import DEFAULT_VARIANTS, MAX_VARIANTS, MIN_VARIANTS, STYLE_BRIEF
+from src.pipeline import BatchOutcome, ThumbResult, generate_batch, reroll, retitle
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ def zip_bytes(results: list[ThumbResult]) -> bytes:
         for result in results:
             for ratio, path in sorted(result.paths.items()):
                 if path is not None:
-                    archive.write(path, arcname=f"{ratio}/{path.name}")
+                    archive.write(path, arcname=f"{ratio}/{download_name(result, ratio)}")
     return buffer.getvalue()
 
 
@@ -135,6 +136,39 @@ def cost_line(outcome: BatchOutcome, planned_images: int) -> str:
     if rerolls:
         line += f" — {rerolls} re-roll{'s' if rerolls != 1 else ''} on top of the {planned_images} planned"
     return line
+
+
+def price_label(n_images: int) -> str:
+    return f"↻ Re-roll art · {n_images} images ≈ ${n_images * IMAGE_COST_USD:.2f}"
+
+
+def style_caption(result: ThumbResult) -> str:
+    """hook · treatment · style, plus a marker when the tile left the matrix."""
+    style = result.style or result.variant.style
+    label = f"{result.variant.hook_type} · {result.variant.treatment} · {style}"
+    if result.style and result.style != result.variant.style:
+        label += " · off-matrix"
+    return label
+
+
+def same_headline(a: str, b: str) -> bool:
+    """Case- and spacing-insensitive, so a retype of the same line is a no-op."""
+    return " ".join((a or "").upper().split()) == " ".join((b or "").upper().split())
+
+
+def download_name(result: ThumbResult, ratio: str) -> str:
+    path = result.paths[ratio]
+    if result.headline and not same_headline(result.headline, result.variant.headline):
+        return f"{path.stem}_edited{path.suffix}"
+    return path.name
+
+
+def replace_result(outcome: BatchOutcome, new: ThumbResult) -> None:
+    for i, row in enumerate(outcome.results):
+        if row.variant.index == new.variant.index:
+            outcome.results[i] = new
+            return
+    outcome.results.append(new)
 
 
 def should_show_outcome(stored_link: str | None, current_link: str) -> bool:
@@ -369,6 +403,90 @@ def require_sign_in():
     st.stop()
 
 
+# --- results card ------------------------------------------------------------
+def _render_card(outcome: BatchOutcome, result: ThumbResult, ratio: str, tab_label: str) -> None:
+    idx = result.variant.index
+    label = style_caption(result)
+    path = result.paths.get(ratio)
+    if path is None:
+        st.error(f"**{label}** — no {tab_label.split(' · ')[0]} version. {result.note}")
+    else:
+        st.image(str(path), caption=label)
+        if result.flagged:
+            st.warning(f"⚠️ {result.note}")
+        st.download_button(
+            "Download", path.read_bytes(),
+            file_name=download_name(result, ratio),
+            mime=("image/png" if path.suffix == ".png" else "image/jpeg"),
+            key=f"dl_{idx}_{ratio}",
+        )
+
+    # The action row is per CONCEPT: drawn once, on the 16:9 tab, acting on all
+    # three sizes. Nothing to act on if no art was cached.
+    if ratio != "16x9" or not result.art_paths:
+        return
+    busy = st.session_state.get(f"busy_{idx}", False)
+
+    # Streamlit forbids writing a widget's state after the widget is drawn, so
+    # anything that wants to change the field (a picked suggestion) leaves a
+    # pending value here and we apply it BEFORE the widget is created.
+    pending = st.session_state.pop(f"hl_pending_{idx}", None)
+    if pending is not None:
+        st.session_state[f"hl_{idx}"] = pending
+    st.session_state.setdefault(f"hl_{idx}", result.headline)
+    new_headline = st.text_input(
+        "Headline", key=f"hl_{idx}", disabled=busy,
+        help="Press Enter to re-set it on all three sizes. Free — no render.",
+    )
+    if new_headline.strip() and not same_headline(new_headline, result.headline) and not busy:
+        with st.status("Re-setting the headline…", expanded=False):
+            replace_result(outcome, retitle(result, new_headline))
+        st.rerun()
+
+    c1, c2, c3 = st.columns([1.0, 1.4, 1.0])
+    if c1.button("3 more lines", key=f"more_{idx}", disabled=busy):
+        got = plan_module.suggest_headlines(result.variant, outcome.plan.ad_summary, result.headline)
+        if got:
+            st.session_state[f"sugg_{idx}"] = got
+        else:
+            st.session_state[f"sugg_{idx}"] = []
+            st.warning("Couldn't get suggestions just now — the field above still works.")
+        st.rerun()
+    suggestions = st.session_state.get(f"sugg_{idx}", [])
+    if suggestions:
+        pick = st.pills("Try one", suggestions, key=f"pick_{idx}", disabled=busy)
+        if pick and not same_headline(pick, result.headline):
+            st.session_state[f"hl_pending_{idx}"] = pick
+            st.session_state.pop(f"pick_{idx}", None)
+            replace_result(outcome, retitle(result, pick))
+            st.rerun()
+
+    if c2.button(price_label(3), key=f"reroll_{idx}", disabled=busy):
+        st.session_state[f"busy_{idx}"] = True
+        try:
+            with st.status(f"Re-rolling concept {idx}…", expanded=False):
+                replace_result(outcome, reroll(result, outcome))
+        finally:
+            st.session_state[f"busy_{idx}"] = False
+        st.rerun()
+
+    others = [style for style in STYLE_BRIEF if style != (result.style or result.variant.style)]
+    look_reset = st.session_state.pop(f"look_pending_reset_{idx}", False)
+    if look_reset:
+        st.session_state[f"look_{idx}"] = "(keep look)"
+    look = c3.selectbox("Look", ["(keep look)"] + others, key=f"look_{idx}",
+                        disabled=busy, label_visibility="collapsed")
+    if look != "(keep look)":
+        st.session_state[f"busy_{idx}"] = True
+        st.session_state[f"look_pending_reset_{idx}"] = True
+        try:
+            with st.status(f"Re-rendering concept {idx} as {look}…", expanded=False):
+                replace_result(outcome, reroll(result, outcome, style=look))
+        finally:
+            st.session_state[f"busy_{idx}"] = False
+        st.rerun()
+
+
 # --- main ------------------------------------------------------------------
 def main() -> None:
     st.set_page_config(page_title="YT Thumbnail Creator", page_icon="🎬",
@@ -517,27 +635,7 @@ def main() -> None:
                 columns = st.columns(3)
                 for position, result in enumerate(outcome.results):
                     with columns[position % 3]:
-                        label = (
-                            f"{result.variant.hook_type} · "
-                            f"{result.variant.treatment}"
-                        )
-                        path = result.paths.get(ratio)
-                        if path is None:
-                            st.error(
-                                f"**{label}** — no {tab_label.split(' · ')[0]} "
-                                f"version. {result.note}"
-                            )
-                            continue
-                        st.image(str(path), caption=label)
-                        if result.flagged:
-                            st.warning(f"⚠️ {result.note}")
-                        st.download_button(
-                            "Download", path.read_bytes(),
-                            file_name=path.name,
-                            mime=("image/png" if path.suffix == ".png"
-                                  else "image/jpeg"),
-                            key=f"dl_{result.variant.index}_{ratio}",
-                        )
+                        _render_card(outcome, result, ratio, tab_label)
 
         successful = [r for r in outcome.results if r.path]
         if successful:

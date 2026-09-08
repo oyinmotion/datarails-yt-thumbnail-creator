@@ -13,9 +13,12 @@ from pydantic import ValidationError
 
 from . import backoff
 from .config import PLANNER_FRAME_WIDTH, PLANNER_MODEL, TRANSCRIBE_MODEL
-from .models import DEFAULT_VARIANTS, MAX_HEADLINE_WORDS, BatchPlan, matrix_for
+from .models import (
+    DEFAULT_VARIANTS, MAX_HEADLINE_WORDS, BatchPlan, HeadlineOptions, Variant,
+    clean_headline_text, matrix_for,
+)
 from .openai_client import get_client
-from .prompts import planner_prompt
+from .prompts import headline_prompt, planner_prompt
 
 log = logging.getLogger(__name__)
 
@@ -165,3 +168,39 @@ def build_plan(
     raise PlanError(
         f"Couldn't plan thumbnails for that ad. ({last_error})"
     ) from last_error
+
+
+def suggest_headlines(
+    variant: Variant, ad_summary: str, current: str, client=None, n: int = 3,
+) -> list[str]:
+    """Up to `n` alternative headlines for one concept. Text only, never raises.
+
+    Returns only lines that pass the same rule the plan itself obeys, distinct
+    from each other and from the current headline. Nothing is rendered here.
+    """
+    try:
+        response = _client(client).responses.parse(
+            model=PLANNER_MODEL,
+            input=[{"role": "user", "content": [
+                {"type": "input_text",
+                 "text": headline_prompt(variant, ad_summary, current, n)},
+            ]}],
+            text_format=HeadlineOptions,
+        )
+        raw = list(response.output_parsed.headlines)
+    except Exception:
+        log.warning("headline suggestions unavailable", exc_info=True)
+        return []
+
+    keep: list[str] = []
+    current_clean = " ".join(current.upper().split())
+    for line in raw:
+        try:
+            cleaned = clean_headline_text(line)
+        except ValueError:
+            continue
+        if cleaned != current_clean and cleaned not in keep:
+            keep.append(cleaned)
+        if len(keep) == n:
+            break
+    return keep

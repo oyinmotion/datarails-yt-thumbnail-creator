@@ -1,4 +1,4 @@
-"""One variant in, image bytes out. One gpt-image-2 call per variant."""
+"""One tile's art in, PNG bytes out. One gpt-image-2 call per tile per ratio."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import contextlib
 import logging
 from pathlib import Path
 
-from .config import GEN_SIZE, IMAGE_MODEL, IMAGE_QUALITY
+from .config import IMAGE_MODEL, IMAGE_QUALITY, PRIMARY_RATIO, RATIOS
 from .models import Variant
 from .openai_client import get_client
 from .prompts import render_prompt
@@ -39,16 +39,24 @@ def _is_moderation(exc: Exception) -> bool:
     )
 
 
-def render_variant(
+def render_art(
     variant: Variant,
     frames: dict[str, Path],
     client=None,
     extra_instruction: str = "",
     frame_override: Path | None = None,
     people_in_ad: bool = True,
-    gen_size: str = GEN_SIZE,
+    style: str | None = None,
+    ratio: str = PRIMARY_RATIO,
 ) -> bytes:
-    """Render one thumbnail at `gen_size`. Returns raw PNG bytes."""
+    """Render the text-free art for one tile at `ratio`'s generation size.
+
+    Returns raw PNG bytes at native generation size; the caller caches them.
+    `style` overrides the slot's locked style (swap look). The headline is not
+    sent — it is set by typeset.py afterwards.
+    """
+    (gen_w, gen_h), _final = RATIOS[ratio]
+    gen_size = f"{gen_w}x{gen_h}"
     primary = frame_override or frames.get(variant.frame_id)
     if primary is None:
         raise RenderError(
@@ -66,12 +74,12 @@ def render_variant(
                 variant.second_frame_id,
             )
     image_paths.extend(
-        pick_refs(variant.style, variant.treatment, limit=3,
+        pick_refs(style or variant.style, variant.treatment, limit=3,
                   people_in_ad=people_in_ad)
     )
     image_paths = image_paths[:MAX_INPUT_IMAGES]
 
-    prompt = render_prompt(variant, people_in_ad=people_in_ad)
+    prompt = render_prompt(variant, people_in_ad=people_in_ad, style=style, ratio=ratio)
     if extra_instruction:
         prompt += f"\n\n## Correction for this attempt\n\n{extra_instruction}"
 

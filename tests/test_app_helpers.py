@@ -229,3 +229,46 @@ def test_cost_line_is_quiet_about_rerolls_when_there_were_none():
     line = app.cost_line(outcome, planned_images=15)
     assert "re-roll" not in line
     assert "15" in line
+
+
+# --- action row helpers -------------------------------------------------------
+from src.pipeline import BatchOutcome as _BatchOutcome, ThumbResult as _ThumbResult
+from src.models import BatchPlan as _BatchPlan, Variant as _Variant
+
+
+def _row(headline="HOOK 1", style="house_energy"):
+    v = _Variant(index=1, hook_type="stat", treatment="split_screen", headline="HOOK 1",
+                 frame_id="scene_001.jpg", second_frame_id=None, scene_direction="x", rationale="y")
+    return _ThumbResult(variant=v, paths={"16x9": Path("out/01_stat_split_screen_16x9.png")},
+                        headline=headline, style=style)
+
+
+def test_price_label_shows_the_image_count_and_the_shared_price():
+    from src.config import IMAGE_COST_USD
+    label = app.price_label(3)
+    assert "3 images" in label and f"${3 * IMAGE_COST_USD:.2f}" in label
+
+
+def test_style_caption_marks_an_off_matrix_tile():
+    assert "off-matrix" not in app.style_caption(_row())
+    assert app.style_caption(_row(style="dark_cinematic")).endswith("off-matrix")
+    assert "dark_cinematic" in app.style_caption(_row(style="dark_cinematic"))
+
+
+def test_download_name_marks_an_edited_headline():
+    assert app.download_name(_row(), "16x9") == "01_stat_split_screen_16x9.png"
+    assert app.download_name(_row(headline="NEW LINE"), "16x9") == "01_stat_split_screen_16x9_edited.png"
+
+
+def test_replace_result_swaps_the_row_with_the_same_index():
+    plan = _BatchPlan(ad_summary="x", transcript_used=True, variants=[])
+    old = _row()
+    outcome = _BatchOutcome(plan=plan, results=[old])
+    new = _row(headline="CHANGED")
+    app.replace_result(outcome, new)
+    assert outcome.results == [new]
+
+
+def test_same_headline_ignores_case_and_spacing():
+    assert app.same_headline("same  ai", "SAME AI")
+    assert not app.same_headline("same ai", "SAME AI TWO")
