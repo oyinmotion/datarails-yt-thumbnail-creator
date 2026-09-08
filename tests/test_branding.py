@@ -177,3 +177,13 @@ def test_the_area_under_the_logo_is_flat_after_stamping_a_busy_image(tmp_path):
     assert branding.busy_score(rgba, plate_strip) < LOGO_BUSY_THRESHOLD, (
         "the plate should have replaced the texture behind the logo"
     )
+
+
+def test_stamp_logo_image_returns_a_same_size_rgb_image_with_the_logo_on_it():
+    from PIL import Image
+    from src import branding
+    base = Image.new("RGB", (2048, 1152), (30, 60, 120))
+    out = branding.stamp_logo_image(base)
+    assert out.size == base.size and out.mode == "RGB"
+    assert out.tobytes() != base.tobytes(), "the logo was composited"
+    assert base.getpixel((5, 5)) == (30, 60, 120), "the input is not mutated"
