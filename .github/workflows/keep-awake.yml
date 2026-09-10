@@ -3,6 +3,15 @@ name: Keep the app awake
 # Streamlit Community Cloud puts an app to sleep after roughly a week without
 # traffic, and the next person to open it gets a "wake this app up" screen and a
 # cold start. This visits the app often enough that it never gets there.
+#
+# The visit MUST follow redirects. Streamlit answers the bare URL with a 303 to
+# its own auth edge (share.streamlit.io/-/auth/app), in well under a second,
+# without ever touching the app container. This workflow used to stop at that
+# 303 and call it a pass, which proved only that Streamlit's platform was up —
+# and it also treated a 404 as a pass, so the job would have stayed green even
+# if the app had been renamed or deleted. Now it follows the chain, insists on
+# landing back on the app's own host with a 200, and reads the body to be sure
+# it is the app shell rather than a "does not exist" page.
 on:
   schedule:
     # Every 6 hours. Far more often than needed for a ~7 day timer, but cheap,
@@ -15,20 +24,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Visit the app
+        env:
+          URL: https://dt-yt-thumbnail-creator.streamlit.app
         run: |
-          URL="https://dt-yt-thumbnail-creator.streamlit.app"
+          set -euo pipefail
           echo "Visiting $URL"
-          # Deliberately NOT -L. The app answers 303 and redirects in a loop,
-          # so following redirects exits 47 ("maximum redirects followed") and
-          # the job fails every run. Any response at all proves it is reachable,
-          # which is what keeps the sleep timer from advancing.
-          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
-                      --max-time 120 --retry 3 --retry-delay 20 \
-                      --retry-all-errors "$URL")
-          echo "HTTP $CODE"
-          # 2xx and 3xx both mean the server answered. Only a 5xx or a total
-          # failure is worth alerting on.
-          if [ -z "$CODE" ] || [ "$CODE" -ge 500 ] || [ "$CODE" -eq 000 ]; then
-            echo "::error::App unreachable (HTTP $CODE)"
+
+          # A cookie jar, because the auth edge sets one on the way through.
+          if ! OUT=$(curl -sS -L -c /tmp/cj -b /tmp/cj \
+                          --max-redirs 12 --max-time 120 \
+                          --retry 3 --retry-delay 20 --retry-all-errors \
+                          -o /tmp/body.html \
+                          -w '%{http_code} %{url_effective} %{num_redirects} %{time_total}' \
+                          "$URL"); then
+            echo "::error::Could not reach $URL at all (no answer from the platform)"
             exit 1
           fi
+
+          CODE=$(cut -d' ' -f1 <<<"$OUT")
+          FINAL=$(cut -d' ' -f2 <<<"$OUT")
+          HOPS=$(cut -d' ' -f3 <<<"$OUT")
+          SECS=$(cut -d' ' -f4 <<<"$OUT")
+          BYTES=$(wc -c < /tmp/body.html | tr -d ' ')
+          echo "HTTP $CODE after $HOPS redirect(s) in ${SECS}s -> $FINAL ($BYTES bytes)"
+
+          # 1. The app itself must answer, not the auth edge and not an error page.
+          if [ "$CODE" != "200" ]; then
+            echo "::error::The app did not answer 200 (got $CODE at $FINAL)"
+            exit 1
+          fi
+
+          # 2. That 200 has to come from the app's own host. A 200 from anywhere
+          #    else means we were parked on a platform page instead.
+          case "$FINAL" in
+            "$URL"*) : ;;
+            *) echo "::error::The ping ended off the app's own host: $FINAL"
+               exit 1 ;;
+          esac
+
+          # 3. Streamlit serves "does not exist" as a 200 with a meta refresh to
+          #    its own error page, so the body is the only place it shows up.
+          if grep -qi 'errors/not_found' /tmp/body.html; then
+            echo "::error::Streamlit says this app does not exist — renamed or deleted?"
+            exit 1
+          fi
+
+          # 4. Cheap sanity check that this is the app shell and not a stub.
+          if ! grep -qi 'streamlit' /tmp/body.html; then
+            echo "::error::The response body is not the Streamlit app shell"
+            exit 1
+          fi
+
+          # A cold start takes many seconds; a warm app answers in about one.
+          # Not a failure — just the thing worth knowing if it shows up often.
+          if [ "${SECS%%.*}" -ge 15 ]; then
+            echo "::notice::The app took ${SECS}s to answer, which looks like a cold start."
+          fi
+
+          echo "Landed on the app itself: HTTP 200, $BYTES bytes of app shell. Sleep timer reset."
